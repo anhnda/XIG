@@ -82,6 +82,24 @@ tests/                  pytest trên mô hình đồ chơi float64
 
 ## 4. Chạy
 
+**Chỉ cần file `gtsegs_ijcv.mat`:** ảnh (`/value/img`) và mask (`/value/gt`) đều nằm
+trong file này. Link tải: http://calvin-vision.net/bigstuff/proj-imagenet/data/gtsegs_ijcv.mat
+
+Cách chạy nhanh nhất là dùng script theo từng giai đoạn:
+
+```bash
+bash scripts/run_all.sh /path/gtsegs_ijcv.mat test
+bash scripts/run_all.sh /path/gtsegs_ijcv.mat calib            # xem runs/calib_black.md trước khi đi tiếp
+BASE=gray bash scripts/run_all.sh /path/gtsegs_ijcv.mat calib  # nếu IG chưa khớp slide
+bash scripts/run_all.sh /path/gtsegs_ijcv.mat dnoise           # sau đó lần lượt: b1, p0, p1, p2
+```
+
+Lần chạy đầu sẽ tạo `runs/seg200.json`, danh sách 200 ảnh theo thứ tự ngẫu nhiên cố định.
+Mọi giai đoạn sau đều dùng lại danh sách này (`b1` lấy 50 ảnh đầu). Có thể dừng giữa chừng:
+chạy lại cùng một lệnh sẽ bỏ qua các dòng đã xong.
+
+Chi tiết từng lệnh nằm bên dưới.
+
 ```bash
 pip install pytest h5py scipy        # h5py cho ImageNet-Seg, scipy cho Wilcoxon (tuỳ chọn)
 pytest -q tests                      # chạy cái này trước tiên

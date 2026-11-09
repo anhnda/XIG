@@ -36,19 +36,28 @@ def _prep(img: Image.Image, mask: Optional[Image.Image], size: int):
     return x, m
 
 
-def select_indices(n_total: int, n: int, seed: int, index_file: Optional[str]) -> list[int]:
-    """Load the index list if the file exists, otherwise draw it once and save it."""
+def select_indices(n_total: int, n: int, seed: int, index_file: Optional[str],
+                   size: int = 200) -> list[int]:
+    """Fixed random image list.
+
+    If `index_file` exists it is loaded; otherwise max(n, size) indices are drawn
+    once (random order, so any prefix is itself a random subset) and saved.
+    Returns the first n (all if n = 0). Asking for more than the file holds is an error.
+    """
     if index_file and os.path.exists(index_file):
         with open(index_file) as fh:
-            idx = json.load(fh)
-        return [int(i) for i in idx][:n] if n else [int(i) for i in idx]
-    n = n_total if not n else min(n, n_total)
-    idx = sorted(random.Random(seed).sample(range(n_total), n))
-    if index_file:
-        os.makedirs(os.path.dirname(os.path.abspath(index_file)), exist_ok=True)
-        with open(index_file, "w") as fh:
-            json.dump(idx, fh)
-    return idx
+            idx = [int(i) for i in json.load(fh)]
+    else:
+        m = n_total if not n else min(max(n, size), n_total)
+        idx = random.Random(seed).sample(range(n_total), m)
+        if index_file:
+            os.makedirs(os.path.dirname(os.path.abspath(index_file)), exist_ok=True)
+            with open(index_file, "w") as fh:
+                json.dump(idx, fh)
+    if n and n > len(idx):
+        raise ValueError(f"index file {index_file} holds {len(idx)} images, {n} requested; "
+                         f"delete it or use another --index-file")
+    return idx[:n] if n else idx
 
 
 class ImageNetSeg:
