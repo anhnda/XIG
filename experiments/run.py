@@ -23,8 +23,8 @@ import os
 
 import torch
 
-from experiments.common import (TargetLogit, append_row, evaluate, load_backbone,
-                                load_done, resolve, run_one)
+from experiments.common import (TargetLogit, TargetProb, append_row, evaluate,
+                                load_backbone, load_done, resolve, run_one)
 from pathattr import Oracle
 from pathattr import data as DATA
 from pathattr import metrics as MET
@@ -48,6 +48,8 @@ def main() -> None:
                     choices=["black", "gray", "white", "blur"],
                     help="baselines for insertion/deletion (one score set each)")
     ap.add_argument("--insdel-steps", type=int, default=100)
+    ap.add_argument("--no-prob", action="store_true",
+                    help="skip the softmax-probability ins/del (insdelp_*)")
     ap.add_argument("--methods", nargs="+", required=True)
     ap.add_argument("--seeds", nargs="+", type=int, default=[0],
                     help="seeds for stochastic methods (deterministic ones use the first)")
@@ -82,6 +84,7 @@ def main() -> None:
             prob = torch.softmax(backbone(x), dim=-1)[0]
         cls = int(prob.argmax())
         model = TargetLogit(backbone, cls)
+        prob_model = None if args.no_prob else TargetProb(backbone, cls)
         oracle = Oracle(model, chunk=args.chunk)
         xb = MET.make_baseline(x, args.baseline)
         bases = {b: MET.make_baseline(x, b) for b in args.insdel}
@@ -100,7 +103,7 @@ def main() -> None:
                 if attr is not None:
                     s = float(attr.sum())
                     row.update({"attr_sum": s, "residual": D - s})
-                    row.update(evaluate(model, x, mask, attr, bases, args.insdel_steps))
+                    row.update(evaluate(model, x, mask, attr, bases, args.insdel_steps, prob_model))
                     if args.save_maps:
                         fn_map = os.path.join(args.save_maps,
                                               f"{name}__{spec.replace(':', '_').replace(',', '_')}__s{seed}.pt")

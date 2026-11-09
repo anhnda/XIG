@@ -60,8 +60,14 @@ def attribution_map(attr: torch.Tensor) -> torch.Tensor:
 @torch.no_grad()
 def insertion_deletion(model: nn.Module, x: torch.Tensor, base: torch.Tensor,
                        attr: torch.Tensor, n_steps: int = 100,
-                       batch_size: int = 16) -> dict:
-    """Same protocol as utility.compute_insertion_deletion, baseline explicit."""
+                       batch_size: int = 16, normalize: bool = True) -> dict:
+    """Same protocol as utility.compute_insertion_deletion, baseline explicit.
+
+    normalize=True : legacy — (AUC − f(base)) / |f(x) − f(base)| on the logit
+                     (unstable when f(base) ≈ f(x), e.g. a blur baseline).
+    normalize=False: raw AUC of the model output (use with a softmax-probability
+                     model: RISE convention, bounded in [0, 1]).
+    """
     device = x.device
     _, C, H, W = x.shape
     n_pix = H * W
@@ -85,6 +91,8 @@ def insertion_deletion(model: nn.Module, x: torch.Tensor, base: torch.Tensor,
     dx = 1.0 / n_steps
     ins_auc = float((ins[:-1] + ins[1:]).sum() * dx / 2)
     del_auc = float((dele[:-1] + dele[1:]).sum() * dx / 2)
+    if not normalize:
+        return {"ins": ins_auc, "del": del_auc, "insdel": ins_auc - del_auc}
     rng = abs(f_x - f_b)
     if rng > 1e-12:
         ins_n, del_n = (ins_auc - f_b) / rng, (del_auc - f_b) / rng

@@ -105,6 +105,68 @@ def idgi(oracle: Oracle, xb, x, gen=None, N: int = 50, node: str = "left") -> At
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# LIG Phase 1 (μ only, "LIG-IDIG") with a choice of gradient node and path
+# ─────────────────────────────────────────────────────────────────────────────
+
+def project_simplex(v: torch.Tensor) -> torch.Tensor:
+    """Euclidean projection onto {μ ≥ 0, Σμ = 1}."""
+    u, _ = torch.sort(v, descending=True)
+    css = u.cumsum(0) - 1.0
+    k = torch.arange(1, v.numel() + 1, device=v.device, dtype=v.dtype)
+    rho = int((u - css / k > 0).nonzero().max())
+    return (v - css[rho] / (rho + 1)).clamp(min=0.0)
+
+
+def lig_mu(oracle: Oracle, xb, x, gen=None, N: int = 50, node: str = "left",
+           mu: str = "adam", lam: float = 1.0, tau: float = 0.01, mu_iter: int = 300,
+           path: str = "straight", rescale: bool = True) -> Attribution:
+    """
+    A = Σ_k μ_k g_k ⊙ h_k  (then multiplicative rescale, as in the paper),
+    g_k taken at γ_k + u·h_k, u = 0 / 0.5 / 1 for node = left / mid / right.
+    μ: 'adam'  → utility.optimize_mu_signal_harvesting (paper's Phase 1)
+       'proj'  → Proj_simplex((λ/τ)|d|), the closed-form optimum without Var
+       'uniform' → μ_k = 1/N (IG / dnoise with that node)
+    path: 'straight' or 'dnoise' (dither defaults, N steps, drawn with gen).
+    node='left', mu='adam', path='straight' ≡ legacy LIG-IDIG with aligned Δf.
+    """
+    u = {"left": 0.0, "mid": 0.5, "right": 1.0}[node]
+    if path == "straight":
+        pts = paths.straight(xb, x, N)
+    elif path == "dnoise":
+        pts = paths.dither(xb, x, N, gen=gen)
+    else:
+        raise ValueError(f"unknown path '{path}'")
+    f = oracle.f(pts)
+    df = f[1:] - f[:-1]
+    h = pts[1:] - pts[:-1]
+    _, g = oracle.grad(pts[:-1] + u * h)
+    gh = g * h
+    d = gh.flatten(1).sum(1)
+
+    if mu == "adam":
+        import utility  # legacy optimiser (repo root)
+        w = utility.optimize_mu_signal_harvesting(
+            d.detach().float().cpu(), df.detach().float().cpu(),
+            lam=lam, tau=tau, n_iter=mu_iter).to(device=x.device, dtype=x.dtype)
+    elif mu == "proj":
+        w = project_simplex((lam / tau) * d.abs().double()).to(x.dtype)
+    elif mu == "uniform":
+        w = torch.full((N,), 1.0 / N, device=x.device, dtype=x.dtype)
+    else:
+        raise ValueError(f"unknown mu '{mu}'")
+
+    attr = (w.view(-1, 1, 1, 1) * gh).sum(dim=0, keepdim=True)
+    D = float(f[-1] - f[0])
+    s = float(attr.sum())
+    if rescale and abs(s) > 1e-12:
+        attr = attr * (D / s)
+    info = {"node": node, "mu_mode": mu, "path": path,
+            "mu_argmax": int(w.argmax()), "mu_support": int((w > 1e-3).sum()),
+            "transition_step": int(df.abs().argmax()), "raw_sum": s}
+    return Attribution(attr, info)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Guided IG (Kapishnikov et al., CVPR 2021) — faithful port of the PAIR
 # reference implementation (saliency/core/guided_ig.py, no anchors)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -206,6 +268,7 @@ def spi(oracle: Oracle, xb, x, gen=None, N: int = 24, alpha: float = 10.0,
 METHODS: dict[str, Callable[..., Attribution]] = {
     "ig": ig,
     "idgi": idgi,
+    "lig_mu": lig_mu,
     "guided_ig": guided_ig,
     "dither": dither,
     "spi": spi,

@@ -44,6 +44,17 @@ class TargetLogit(nn.Module):
         return self.backbone(x)[:, self.target]
 
 
+class TargetProb(nn.Module):
+    """backbone -> softmax probability of one class, shape (B,)."""
+
+    def __init__(self, backbone: nn.Module, target: int):
+        super().__init__()
+        self.backbone, self.target = backbone, int(target)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.softmax(self.backbone(x), dim=-1)[:, self.target]
+
+
 def load_backbone(name: str, device: torch.device) -> nn.Module:
     import torchvision.models as tvm
     table = {
@@ -129,7 +140,7 @@ def resolve(spec: str) -> tuple[Callable, dict, bool]:
         return _legacy_fn(name), params, name in ("legacy_lig",)
     fn, base, stoch = M.resolve(name)
     base.update(params)
-    if str(base.get("est", "left")).startswith("random"):
+    if str(base.get("est", "left")).startswith("random") or base.get("path") == "dnoise":
         stoch = True
     return fn, base, stoch
 
@@ -139,11 +150,16 @@ def resolve(spec: str) -> tuple[Callable, dict, bool]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def evaluate(model: nn.Module, x: torch.Tensor, mask: Optional[torch.Tensor],
-             attr: torch.Tensor, eval_bases: dict, n_steps: int = 100) -> dict:
+             attr: torch.Tensor, eval_bases: dict, n_steps: int = 100,
+             prob_model: Optional[nn.Module] = None) -> dict:
+    """insdel_<b>: legacy normalised logit AUC; insdelp_<b>: raw softmax-prob AUC."""
     row = {}
     for b, base in eval_bases.items():
         s = MET.insertion_deletion(model, x, base, attr, n_steps=n_steps)
         row[f"ins_{b}"], row[f"del_{b}"], row[f"insdel_{b}"] = s["ins"], s["del"], s["insdel"]
+        if prob_model is not None:
+            p = MET.insertion_deletion(prob_model, x, base, attr, n_steps=n_steps, normalize=False)
+            row[f"insp_{b}"], row[f"delp_{b}"], row[f"insdelp_{b}"] = p["ins"], p["del"], p["insdel"]
     if mask is not None:
         row.update(MET.localisation(attr, mask))
     row["checker"] = MET.checker_energy(attr, mask)

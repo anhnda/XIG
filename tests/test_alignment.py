@@ -58,6 +58,29 @@ def test_legacy_flag_in_straight_line_pass():
         utility.FIX_DF_ALIGNMENT = old
 
 
+def test_lig_mu_left_matches_legacy_lig_idig_fixed():
+    from lig_idig import compute_lig_idig
+    model, oracle, x, xb, D = setup()
+    old = utility.FIX_DF_ALIGNMENT
+    try:
+        utility.FIX_DF_ALIGNMENT = True
+        a_old = compute_lig_idig(model, x, {"baseline": xb, "N": 12}).attributions
+    finally:
+        utility.FIX_DF_ALIGNMENT = old
+    a_new = M.lig_mu(oracle, xb, x, N=12, node="left", mu="adam").attr
+    assert float((a_new - a_old).norm() / a_old.norm()) < 1e-5
+    assert abs(float(a_new.sum()) - D) < 1e-9
+
+
+def test_lig_mu_mid_and_proj_run():
+    model, oracle, x, xb, D = setup()
+    for kw in (dict(node="mid"), dict(node="mid", mu="proj"),
+               dict(node="mid", path="dnoise", N=8)):
+        r = M.lig_mu(oracle, xb, x, torch.Generator().manual_seed(0), **kw)
+        assert torch.isfinite(r.attr).all()
+        assert abs(float(r.attr.sum()) - D) < 1e-9
+
+
 def test_oracle_counts():
     model, oracle, x, xb, D = setup()
     oracle.reset()

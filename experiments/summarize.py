@@ -69,7 +69,8 @@ def main() -> None:
     ap.add_argument("jsonl")
     ap.add_argument("--ref", default=None, help="reference method spec for paired Δ")
     ap.add_argument("--metrics", nargs="+",
-                    default=["insdel_black", "overlap", "iou", "pointing", "checker"])
+                    default=["insdel_black", "insdelp_black", "insdelp_blur", "overlap", "iou",
+                             "pointing", "checker"])
     args = ap.parse_args()
 
     rows, errors = load(args.jsonl)
@@ -84,7 +85,7 @@ def main() -> None:
         if not pim:
             continue
         print(f"\n### {metric}\n")
-        hdr = "| method | n img | mean ± std | seed std | backward |"
+        hdr = "| method | n img | mean ± std | median | seed std | backward |"
         if args.ref:
             hdr += f" Δ vs {args.ref} | 95% CI | Wilcoxon p |"
         print(hdr)
@@ -98,7 +99,8 @@ def main() -> None:
             sd = vals.std(ddof=1) if len(vals) > 1 else 0.0
             seed_col = f"{sstd.mean():.4f}" if len(sstd) else "–"
             bwd_col = f"{np.mean(bwd[m]):.0f}" if bwd[m] else "–"
-            line = f"| {m} | {len(vals)} | {vals.mean():.4f} ± {sd:.4f} | {seed_col} | {bwd_col} |"
+            line = (f"| {m} | {len(vals)} | {vals.mean():.4f} ± {sd:.4f} | {np.median(vals):.4f} "
+                    f"| {seed_col} | {bwd_col} |")
             if args.ref:
                 common = sorted(set(pim[m]) & set(ref))
                 if m != args.ref and len(common) >= 2:
