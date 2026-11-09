@@ -65,10 +65,17 @@ def load_backbone(name: str, device: torch.device) -> nn.Module:
         "vit_b_16": lambda: tvm.vit_b_16(weights=tvm.ViT_B_16_Weights.IMAGENET1K_V1),
         "swin_b": lambda: tvm.swin_b(weights=tvm.Swin_B_Weights.IMAGENET1K_V1),
         "convnext_base": lambda: tvm.convnext_base(weights=tvm.ConvNeXt_Base_Weights.IMAGENET1K_V1),
+        "efficientnet_b0": lambda: tvm.efficientnet_b0(weights=tvm.EfficientNet_B0_Weights.IMAGENET1K_V1),
+        "mobilenet_v2": lambda: tvm.mobilenet_v2(weights=tvm.MobileNet_V2_Weights.IMAGENET1K_V2),
+        "inception_v3": lambda: tvm.inception_v3(weights=tvm.Inception_V3_Weights.IMAGENET1K_V1),
     }
     if name not in table:
         raise ValueError(f"unknown model '{name}', choose from {sorted(table)}")
-    m = table[name]().to(device).eval()
+    m = table[name]()
+    if name == "inception_v3":          # as in KIG compare_methods.load_model
+        m.aux_logits = False
+        m.AuxLogits = None
+    m = m.to(device).eval()
     for p in m.parameters():
         p.requires_grad_(False)
     return m
@@ -214,12 +221,18 @@ def open_data(args):
     from pathattr import data as DATA
     dev = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     backbone = load_backbone(args.model, dev)
+    size = input_size(args.model)
     if args.data == "seg":
-        ds = DATA.ImageNetSeg(args.seg_mat)
+        ds = DATA.ImageNetSeg(args.seg_mat, size=size)
     else:
-        ds = DATA.FolderImages(args.images, args.masks, prep=args.prep)
+        ds = DATA.FolderImages(args.images, args.masks, size=size, prep=args.prep)
     idx = DATA.select_indices(len(ds), args.n, args.index_seed, args.index_file)
     return dev, backbone, DATA.iterate(ds, idx), len(idx)
+
+
+def input_size(model_name: str) -> int:
+    """299 for Inception v3 (Resize 342 + CenterCrop 299 with --prep crop), else 224."""
+    return 299 if model_name == "inception_v3" else 224
 
 
 def target_model(backbone: nn.Module, x: torch.Tensor) -> tuple[TargetLogit, int, float]:

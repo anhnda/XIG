@@ -23,7 +23,7 @@ import os
 
 import torch
 
-from experiments.common import (TargetLogit, TargetProb, append_row, evaluate,
+from experiments.common import (TargetLogit, TargetProb, append_row, evaluate, input_size,
                                 load_backbone, load_done, resolve, run_one)
 from pathattr import Oracle
 from pathattr import data as DATA
@@ -65,11 +65,11 @@ def main() -> None:
     if args.data == "seg":
         if not args.seg_mat:
             ap.error("--seg-mat is required for --data seg")
-        ds = DATA.ImageNetSeg(args.seg_mat)
+        ds = DATA.ImageNetSeg(args.seg_mat, size=input_size(args.model))
     else:
         if not args.images:
             ap.error("--images is required for --data folder")
-        ds = DATA.FolderImages(args.images, args.masks, prep=args.prep)
+        ds = DATA.FolderImages(args.images, args.masks, size=input_size(args.model), prep=args.prep)
     indices = DATA.select_indices(len(ds), args.n, args.index_seed, args.index_file)
     print(f"[run] {len(indices)} images, {len(args.methods)} methods, device={dev}")
 
