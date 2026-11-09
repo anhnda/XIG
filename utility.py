@@ -212,8 +212,9 @@ def _build_steps(d_list, df_list, f_vals, gnorms, mu, N) -> list[StepInfo]:
 
 
 def _pack_result(name, attr, d_list, df_list, f_vals, gnorms, mu, N,
-                 t0, Q_history=None) -> AttributionResult:
-    """Build AttributionResult with all three metrics in one pass."""
+                 t0, Q_history=None, gamma_pts=None) -> AttributionResult:
+    """Build AttributionResult with all three metrics in one pass.
+    gamma_pts is accepted (and ignored) for compatibility with KIG's blurig.py."""
     device = attr.device
     d_arr = torch.tensor(d_list, device=device)
     df_arr = torch.tensor(df_list, device=device)

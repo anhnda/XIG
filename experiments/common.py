@@ -99,7 +99,8 @@ def parse_spec(spec: str) -> tuple[str, dict]:
     return name.strip(), params
 
 
-LEGACY = ("legacy_ig", "legacy_idig", "legacy_guided_ig", "legacy_lig_idig", "legacy_lig")
+LEGACY = ("legacy_ig", "legacy_idig", "legacy_guided_ig", "legacy_lig_idig", "legacy_lig",
+          "legacy_blurig")
 
 
 def _legacy_fn(name: str) -> Callable:
@@ -115,6 +116,8 @@ def _legacy_fn(name: str) -> Callable:
             from guided_ig import compute_guided_ig as f
         elif name == "legacy_lig_idig":
             from lig_idig import compute_lig_idig as f
+        elif name == "legacy_blurig":
+            from blurig import compute_blurig as f   # copied verbatim from KIG-main
         else:
             from lig import compute_lig as f
         old = utility.FIX_DF_ALIGNMENT
