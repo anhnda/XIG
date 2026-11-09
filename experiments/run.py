@@ -36,6 +36,8 @@ def main() -> None:
     ap.add_argument("--seg-mat", default=None, help="path to gtsegs_ijcv.mat")
     ap.add_argument("--images", default=None, help="image folder (--data folder)")
     ap.add_argument("--masks", default=None, help="mask folder, same file stems (optional)")
+    ap.add_argument("--prep", default="resize", choices=["resize", "crop"],
+                    help="folder images: resize to 224 (default) or Resize256+CenterCrop224 (legacy)")
     ap.add_argument("--n", type=int, default=200, help="number of images (0 = all)")
     ap.add_argument("--index-file", default=None, help="JSON list of image indices (created if missing)")
     ap.add_argument("--index-seed", type=int, default=0)
@@ -65,7 +67,7 @@ def main() -> None:
     else:
         if not args.images:
             ap.error("--images is required for --data folder")
-        ds = DATA.FolderImages(args.images, args.masks)
+        ds = DATA.FolderImages(args.images, args.masks, prep=args.prep)
     indices = DATA.select_indices(len(ds), args.n, args.index_seed, args.index_file)
     print(f"[run] {len(indices)} images, {len(args.methods)} methods, device={dev}")
 

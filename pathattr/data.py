@@ -27,12 +27,23 @@ from .metrics import IMAGENET_MEAN, IMAGENET_STD
 _TO_TENSOR = T.Compose([T.ToTensor(), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
 
 
-def _prep(img: Image.Image, mask: Optional[Image.Image], size: int):
-    img = img.convert("RGB").resize((size, size), Image.BILINEAR)
+def _prep(img: Image.Image, mask: Optional[Image.Image], size: int, prep: str = "resize"):
+    """prep='resize': straight to size×size (image and mask stay aligned).
+    prep='crop'  : Resize(256) + CenterCrop(224), exactly as the legacy code."""
+    img = img.convert("RGB")
+    if prep == "crop":
+        short = int(round(size * 256 / 224))
+        img = T.CenterCrop(size)(T.Resize(short)(img))
+        if mask is not None:
+            mask = T.CenterCrop(size)(T.Resize(short, interpolation=T.InterpolationMode.NEAREST)(mask))
+    elif prep == "resize":
+        img = img.resize((size, size), Image.BILINEAR)
+        if mask is not None:
+            mask = mask.resize((size, size), Image.NEAREST)
+    else:
+        raise ValueError(f"unknown prep '{prep}'")
     x = _TO_TENSOR(img).unsqueeze(0)
-    m = None
-    if mask is not None:
-        m = torch.from_numpy(np.array(mask.resize((size, size), Image.NEAREST))) > 0
+    m = torch.from_numpy(np.array(mask)) > 0 if mask is not None else None
     return x, m
 
 
@@ -83,8 +94,9 @@ class ImageNetSeg:
 class FolderImages:
     EXT = (".jpg", ".jpeg", ".png", ".bmp")
 
-    def __init__(self, image_dir: str, mask_dir: Optional[str] = None, size: int = 224):
-        self.image_dir, self.mask_dir, self.size = image_dir, mask_dir, size
+    def __init__(self, image_dir: str, mask_dir: Optional[str] = None, size: int = 224,
+                 prep: str = "resize"):
+        self.image_dir, self.mask_dir, self.size, self.prep = image_dir, mask_dir, size, prep
         self.files = sorted(f for f in os.listdir(image_dir) if f.lower().endswith(self.EXT))
         self.n_total = len(self.files)
 
@@ -102,7 +114,7 @@ class FolderImages:
                 if os.path.exists(p):
                     mask = Image.open(p).convert("L")
                     break
-        x, m = _prep(img, mask, self.size)
+        x, m = _prep(img, mask, self.size, self.prep)
         return x, m, fname
 
 

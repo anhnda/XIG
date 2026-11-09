@@ -181,6 +181,7 @@ def add_data_args(ap) -> None:
     ap.add_argument("--seg-mat", default=None)
     ap.add_argument("--images", default=None)
     ap.add_argument("--masks", default=None)
+    ap.add_argument("--prep", default="resize", choices=["resize", "crop"])
     ap.add_argument("--n", type=int, default=50)
     ap.add_argument("--index-file", default=None)
     ap.add_argument("--index-seed", type=int, default=0)
@@ -197,7 +198,7 @@ def open_data(args):
     if args.data == "seg":
         ds = DATA.ImageNetSeg(args.seg_mat)
     else:
-        ds = DATA.FolderImages(args.images, args.masks)
+        ds = DATA.FolderImages(args.images, args.masks, prep=args.prep)
     idx = DATA.select_indices(len(ds), args.n, args.index_seed, args.index_file)
     return dev, backbone, DATA.iterate(ds, idx), len(idx)
 
