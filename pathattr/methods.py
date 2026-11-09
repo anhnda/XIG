@@ -82,19 +82,26 @@ def ig(oracle: Oracle, xb, x, gen=None, N: int = 50, est: str = "left",
 # IDGI (Yang, Wang, Bilen, CVPR 2023) — with aligned Δf, exactly complete
 # ─────────────────────────────────────────────────────────────────────────────
 
-def idgi(oracle: Oracle, xb, x, gen=None, N: int = 50) -> Attribution:
+def idgi(oracle: Oracle, xb, x, gen=None, N: int = 50, node: str = "left") -> Attribution:
     """A = Σ_k g_k² · Δf_k / ‖g_k‖²  with Δf_k = f(γ_{k+1}) − f(γ_k).
 
-    Σ_i A_i = Σ_k Δf_k = f(x) − f(x'): no rescale needed.
+    node: where g_k is taken inside step k — 'left' γ_k (IDGI paper),
+          'mid' (γ_k + γ_{k+1})/2, 'right' γ_{k+1}.
+    The legacy buggy IDGI ≈ node='right' (minus the last step).
+    Σ_i A_i = Σ_k Δf_k = f(x) − f(x') for every node: no rescale needed.
     """
-    pe = eval_path(oracle, paths.straight(xb, x, N))
-    gn2 = pe.g.flatten(1).pow(2).sum(1)
+    u = {"left": 0.0, "mid": 0.5, "right": 1.0}[node]
+    pts = paths.straight(xb, x, N)
+    f = oracle.f(pts)
+    df = f[1:] - f[:-1]
+    _, g = oracle.grad(pts[:-1] + u * (pts[1:] - pts[:-1]))
+    gn2 = g.flatten(1).pow(2).sum(1)
     ok = gn2 > 1e-30
-    scale = torch.where(ok, pe.df / torch.where(ok, gn2, torch.ones_like(gn2)),
+    scale = torch.where(ok, df / torch.where(ok, gn2, torch.ones_like(gn2)),
                         torch.zeros_like(gn2))
-    attr = (pe.g.pow(2) * scale.view(-1, 1, 1, 1)).sum(dim=0, keepdim=True)
-    lost = float(pe.df[~ok].sum()) if (~ok).any() else 0.0
-    return Attribution(attr, {"dropped_df_zero_grad": lost})
+    attr = (g.pow(2) * scale.view(-1, 1, 1, 1)).sum(dim=0, keepdim=True)
+    lost = float(df[~ok].sum()) if (~ok).any() else 0.0
+    return Attribution(attr, {"dropped_df_zero_grad": lost, "node": node})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
