@@ -47,7 +47,8 @@ def test_legacy_flag_in_straight_line_pass():
     try:
         utility.FIX_DF_ALIGNMENT = False
         *_, df_list, _, _ = utility._straight_line_pass(model, x, xb, 10)
-        assert df_list[0] == 0.0
+        # legacy Δf_0 = f(γ_0) − f(x') from two different forward calls: 0 up to round-off
+        assert abs(df_list[0]) < 1e-12
         assert abs(sum(df_list) - D) > 1e-8
         utility.FIX_DF_ALIGNMENT = True
         *_, df_list, _, _ = utility._straight_line_pass(model, x, xb, 10)
