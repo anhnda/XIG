@@ -253,6 +253,38 @@ def dither(oracle: Oracle, xb, x, gen=None, N: int = 24, thresh: str = "bayer",
     return _ensemble(make, oracle, K, est, Q, K_cv, xb, x, gen)
 
 
+def smooth_ig(oracle: Oracle, xb, x, gen=None, N: int = 24, sigma: float = 0.3,
+              mode: str = "clean", K: int = 1) -> Attribution:
+    """Straight line with per-element jitter ε_k ~ N(0, σ²|Δx|²) at interior points.
+
+    γ̃_k = γ_k + ε_k (ε_0 = ε_N = 0), g_k = ∇f(γ̃_k).
+      mode='clean'      Σ g_k ⊙ (γ_{k+1} − γ_k)      smoothed-gradient IG (has a limit as N→∞)
+      mode='noise_only' Σ g_k ⊙ (ε_{k+1} − ε_k)      the jitter term alone (Stein: ≈ −σ²·curvature)
+      mode='jitter'     Σ g_k ⊙ (γ̃_{k+1} − γ̃_k)    = clean + noise_only = dither(spread=0, noise=σ)
+    K > 1 averages K independent noise draws (K·N gradients).
+    """
+    if mode not in ("clean", "noise_only", "jitter"):
+        raise ValueError(f"unknown mode '{mode}'")
+    pts = paths.straight(xb, x, N)
+    h_clean = pts[1:] - pts[:-1]
+    acc = torch.zeros_like(x)
+    for _ in range(max(1, int(K))):
+        eps = torch.randn((N + 1,) + tuple(x.shape[1:]), generator=gen,
+                          dtype=torch.float64).to(device=x.device, dtype=x.dtype)
+        eps = eps * sigma * (x - xb).abs()
+        eps[0] = 0.0
+        eps[N] = 0.0
+        _, g = oracle.grad((pts + eps)[:-1])
+        if mode == "clean":
+            h = h_clean
+        elif mode == "noise_only":
+            h = eps[1:] - eps[:-1]
+        else:
+            h = h_clean + eps[1:] - eps[:-1]
+        acc = acc + (g * h).sum(dim=0, keepdim=True)
+    return Attribution(acc / max(1, int(K)), {"sigma": sigma, "mode": mode})
+
+
 def spi(oracle: Oracle, xb, x, gen=None, N: int = 24, alpha: float = 10.0,
         per_channel: bool = True, est: str = "left", Q: int = 1, K: int = 1,
         K_cv: int = 8) -> Attribution:
@@ -272,6 +304,7 @@ METHODS: dict[str, Callable[..., Attribution]] = {
     "guided_ig": guided_ig,
     "dither": dither,
     "spi": spi,
+    "smooth_ig": smooth_ig,
 }
 
 # presets: name -> (method, default params). Params given on the command line
@@ -283,7 +316,7 @@ PRESETS: dict[str, tuple[str, dict]] = {
     "block14":       ("dither", dict(N=24, thresh="block", block=14, spread=1.0)),
 }
 
-STOCHASTIC = {"dither", "spi"}
+STOCHASTIC = {"dither", "spi", "smooth_ig"}
 
 
 def resolve(name: str) -> tuple[Callable[..., Attribution], dict, bool]:
