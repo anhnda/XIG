@@ -99,42 +99,82 @@ def qp_stationarity(R: torch.Tensor, q: torch.Tensor, eps: float) -> float:
     return float(g @ q - g.min())
 
 
+def _qp_grad(R: torch.Tensor, q: torch.Tensor, eps: float) -> torch.Tensor:
+    g = 2.0 * (R @ q)
+    if eps > 0:
+        g = g + eps * (torch.log(q.numel() * q.clamp_min(1e-300)) + 1.0)
+    return g
+
+
 def solve_entropic_qp(R: torch.Tensor, eps: float, iters: int = 100000,
-                      tol: float = 1e-12) -> tuple[torch.Tensor, dict]:
-    """argmin_{q ∈ Δ_K} qᵀRq + eps·KL(q‖u) by entropic mirror descent with
-    backtracking (R symmetric PSD, eps ≥ 0). Convex; unique when eps > 0.
-    Stops on optimality (qp_stationarity), not on the size of the last step:
-    eps > 0 → residual < tol;  eps = 0 → FW gap < tol·(max|R| + 1e-300)."""
+                      tol: float = 1e-12, warm: float = 1e-4,
+                      newton_iters: int = 100) -> tuple[torch.Tensor, dict]:
+    """argmin_{q ∈ Δ_K} qᵀRq + eps·KL(q‖u)  (R symmetric PSD, eps ≥ 0).
+    Convex; unique when eps > 0.
+
+    Phase 1 — entropic mirror descent with the FIXED step 1/(2 max|R| + eps).
+        That step is always admissible (the quadratic is 2max|R|-smooth and eps·KL
+        is eps-smooth relative to the entropy), so every step decreases the
+        objective without evaluating it. No function-value line search: near the
+        optimum the decrease is O(stat²) and drowns in round-off.
+    Phase 2 (eps > 0) — damped Newton on the KKT system
+        [2R + eps·diag(1/q)   1] [dq]   [−∇f]
+        [1ᵀ                   0] [dν] = [ 0 ],
+        step kept inside the simplex, accepted when the projected-gradient
+        residual decreases (measurable to ~1e-16). Quadratic convergence.
+    Stops on optimality (qp_stationarity):
+        eps > 0 → fixed-point residual < tol;   eps = 0 → FW gap < tol·max|R|."""
     R = R.double()
+    R = 0.5 * (R + R.t())
     K = R.shape[0]
     q = torch.full((K,), 1.0 / K, dtype=torch.float64)
-    obj = lambda v: float(v @ R @ v) + (eps * float(_xlogx_kl(v)) if eps > 0 else 0.0)
-    f = obj(q)
-    # 1/(2 max|R| + eps) is always admissible (relative smoothness w.r.t. entropy),
-    # so backtracking never goes below it (guards against round-off near the optimum)
-    step_safe = 1.0 / (2.0 * float(R.abs().max()) + eps + 1e-300)
-    step = step_safe
+    step = 1.0 / (2.0 * float(R.abs().max()) + eps + 1e-300)
     tol_eff = tol if eps > 0 else tol * (float(R.abs().max()) + 1e-300)
+    stop1 = max(tol_eff, warm) if eps > 0 else tol_eff
     stat = qp_stationarity(R, q, eps)
     it = 0
-    for it in range(1, iters + 1):
-        if stat < tol_eff:
-            break
-        g = 2.0 * (R @ q)
-        if eps > 0:
-            g = g + eps * (torch.log(K * q.clamp_min(1e-300)) + 1.0)
-        logq = torch.log(q.clamp_min(1e-300))
-        while True:
-            qn = torch.softmax(logq - step * g, dim=0)
-            fn = obj(qn)
-            kl = float((qn * (torch.log(qn.clamp_min(1e-300)) - logq)).sum())
-            if fn <= f + float(g @ (qn - q)) + kl / step + 1e-14 * (abs(f) + 1.0) or step <= step_safe:
-                break
-            step = max(0.5 * step, step_safe)
-        q, f = qn, fn
-        step *= 2.0
+    while it < iters and stat >= stop1:                      # phase 1
+        it += 1
+        q = torch.softmax(torch.log(q.clamp_min(1e-300)) - step * _qp_grad(R, q, eps), dim=0)
         stat = qp_stationarity(R, q, eps)
-    return q, {"iters": it, "obj": f, "stationarity": stat, "converged": stat < tol_eff}
+
+    n_newton = 0
+    if eps > 0 and stat >= tol_eff:                          # phase 2
+        one = torch.ones(K, 1, dtype=torch.float64)
+        for n_newton in range(1, newton_iters + 1):
+            g = _qp_grad(R, q, eps)
+            res0 = float((g - g.mean()).abs().max())
+            H = 2.0 * R + eps * torch.diag(1.0 / q.clamp_min(1e-300))
+            KKT = torch.cat([torch.cat([H, one], 1),
+                             torch.cat([one.t(), torch.zeros(1, 1, dtype=torch.float64)], 1)], 0)
+            rhs = torch.cat([-g, torch.zeros(1, dtype=torch.float64)])
+            try:
+                dq = torch.linalg.solve(KKT, rhs)[:K]
+            except RuntimeError:
+                break
+            neg = dq < 0
+            a = 1.0
+            if bool(neg.any()):
+                a = min(1.0, 0.99 * float((q[neg] / (-dq[neg])).min()))
+            accepted = False
+            while a > 1e-12:
+                qn = (q + a * dq).clamp_min(1e-300)
+                qn = qn / qn.sum()
+                gn = _qp_grad(R, qn, eps)
+                if float((gn - gn.mean()).abs().max()) < res0:
+                    accepted = True
+                    break
+                a *= 0.5
+            if not accepted:
+                break
+            q = qn
+            stat = qp_stationarity(R, q, eps)
+            if stat < tol_eff:
+                break
+
+    f = float(q @ R @ q) + (eps * float(_xlogx_kl(q)) if eps > 0 else 0.0)
+    return q, {"iters": it, "newton": n_newton, "obj": f, "stationarity": stat,
+               "converged": stat < tol_eff}
 
 
 def gibbs_weights(S: torch.Tensor, eps: float) -> torch.Tensor:
