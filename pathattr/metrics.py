@@ -135,22 +135,31 @@ def checker_energy(attr: torch.Tensor, mask: Optional[torch.Tensor] = None) -> f
 
 @torch.no_grad()
 def infidelity(model: nn.Module, x: torch.Tensor, attr: torch.Tensor, sigma: float = 0.1,
-               n: int = 64, gen: Optional[torch.Generator] = None, batch_size: int = 16) -> dict:
-    """I ~ N(0, σ² I) in the (normalised) input space,  v = f(x) − f(x − I),  u = Iᵀa.
-        infd_raw  = E[(u − v)²]
-        infd      = min_β E[(βu − v)²] / E[v²]   ∈ [0, 1]   (scale-free; lower is better)
-    A Gaussian-kernel metric: the counterpart of ins/del's binary-mask kernel."""
+               n: int = 64, gen: Optional[torch.Generator] = None, batch_size: int = 16,
+               base: Optional[torch.Tensor] = None, mode: str = "delta") -> dict:
+    """Gaussian-perturbation infidelity (Yeh et al., NeurIPS 2019),  v = f(x) − f(x − I).
+
+    mode='delta' (default, for completeness-type attributions a_i ≈ ∫∂_i f · Δx_i):
+        η ~ N(0, σ²) per element,  I = η ⊙ (x − x'),  u = ηᵀa
+        (moving feature i back by a fraction η_i of its own Δx_i costs ≈ η_i a_i)
+    mode='abs' (gradient-type attributions only):
+        I ~ N(0, σ²) in input units,  u = Iᵀa
+    infd_raw = E[(u − v)²];  infd = min_β E[(βu − v)²] / E[v²] ∈ [0, 1]  (lower is better)."""
+    if mode == "delta" and base is None:
+        raise ValueError("infidelity mode 'delta' needs the path baseline")
     fx = float(model(x).reshape(-1)[0])
-    a = attr.reshape(-1).double()
+    a = attr.reshape(-1).double().cpu()
+    dx = (x - base) if mode == "delta" else None
     us, vs = [], []
     done = 0
     while done < n:
         b = min(batch_size, n - done)
-        I = torch.randn((b,) + tuple(x.shape[1:]), generator=gen, dtype=torch.float64)
-        I = (I * sigma).to(device=x.device, dtype=x.dtype)
+        eta = torch.randn((b,) + tuple(x.shape[1:]), generator=gen, dtype=torch.float64) * sigma
+        eta_d = eta.to(device=x.device, dtype=x.dtype)
+        I = eta_d * dx if mode == "delta" else eta_d
         fv = model(x - I).double().reshape(-1)
         vs.append(fx - fv.cpu())
-        us.append((I.reshape(b, -1).double().cpu() @ a.cpu()))
+        us.append(eta.reshape(b, -1) @ a)
         done += b
     u, v = torch.cat(us), torch.cat(vs)
     raw = float(((u - v) ** 2).mean())
@@ -158,7 +167,7 @@ def infidelity(model: nn.Module, x: torch.Tensor, attr: torch.Tensor, sigma: flo
     beta = float((u * v).sum()) / uu if uu > 0 else 0.0
     vv = float((v * v).mean())
     infd = float(((beta * u - v) ** 2).mean()) / vv if vv > 0 else float("nan")
-    return {"infd": infd, "infd_raw": raw, "infd_beta": beta}
+    return {"infd": infd, "infd_raw": raw, "infd_beta": beta, "infd_mode": mode}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

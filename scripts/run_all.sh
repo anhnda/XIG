@@ -61,12 +61,16 @@ run_p1() {
 }
 
 run_p2() {
+  # equal budget ≈192 backward + cheap variants at 24/50 backward; full attributions saved
   python -m experiments.run $DATA --n 200 --baseline "$BASE" --insdel "$BASE" blur \
     --methods "ig:N=50" "ig:N=192,est=mid" "idgi:N=192,node=mid" guided_ig legacy_blurig dnoise \
+              "dnoise:K=8,est=mid" "spi:alpha=10,K=1,est=mid" \
               "smooth_ig:N=24,K=8,sigma=0.3,unit=abs" "noise_only:N=24,K=8,sigma=0.3,unit=abs" \
               "spi:alpha=0.1,K=8,est=mid" "spi:alpha=1,K=8,est=mid" "spi:alpha=10,K=8,est=mid" \
+              "spi:alpha=100,K=8,est=mid" "spi:alpha=1000,K=8,est=mid" \
               "kernelshap:parts=${PARTS},M=256" \
-    --infd-n 64 --road --seeds $SEEDS --out "$OUT/p2_${TAG}.jsonl"
+    --infd-n 64 --infd-mode delta --road --seeds $SEEDS \
+    --save-attr "$OUT/attr_p2_${TAG}" --out "$OUT/p2_${TAG}.jsonl"
   python -m experiments.summarize "$OUT/p2_${TAG}.jsonl" --ref "ig:N=50" --metrics $METRICS residual \
     | tee "$OUT/p2_${TAG}.txt"
 }

@@ -20,6 +20,7 @@ python -m experiments.run --data folder --images ./sample_imagenet1k --n 50 \
 from __future__ import annotations
 
 import argparse
+import re
 import os
 
 import torch
@@ -54,6 +55,9 @@ def main() -> None:
                     help="skip the softmax-probability ins/del (insdelp_*) (ROAD needs it)")
     ap.add_argument("--infd-n", type=int, default=0, help="infidelity samples (0 = off)")
     ap.add_argument("--infd-sigma", type=float, default=0.1)
+    ap.add_argument("--infd-mode", default="delta", choices=["delta", "abs"])
+    ap.add_argument("--save-attr", default=None,
+                    help="folder to save full signed attributions (fp16) for experiments.reeval")
     ap.add_argument("--road", action="store_true", help="approximate ROAD (MoRF/LeRF)")
     ap.add_argument("--methods", nargs="+", required=True)
     ap.add_argument("--seeds", nargs="+", type=int, default=[0],
@@ -85,6 +89,8 @@ def main() -> None:
     done = load_done(args.out)
     if args.save_maps:
         os.makedirs(args.save_maps, exist_ok=True)
+    if args.save_attr:
+        os.makedirs(args.save_attr, exist_ok=True)
 
     for n_img, (idx, x, mask, name) in enumerate(DATA.iterate(ds, indices)):
         x = x.to(dev)
@@ -114,7 +120,10 @@ def main() -> None:
                     egen = torch.Generator().manual_seed(7_919 + idx)   # same perturbations for every method
                     row.update(evaluate(model, x, mask, attr, bases, args.insdel_steps, prob_model,
                                         infd_n=args.infd_n, infd_sigma=args.infd_sigma,
-                                        road=args.road, gen=egen))
+                                        road=args.road, gen=egen, infd_base=xb,
+                                        infd_mode=args.infd_mode))
+                    if args.save_attr:
+                        save_attr(args.save_attr, name, idx, spec, seed, args.baseline, attr)
                     if args.save_maps:
                         fn_map = os.path.join(args.save_maps,
                                               f"{name}__{spec.replace(':', '_').replace(',', '_')}__s{seed}.pt")
@@ -124,6 +133,17 @@ def main() -> None:
                     f"insdel={row.get('insdel_' + args.insdel[0], float('nan')):.3f} " \
                     f"iou={row.get('iou', float('nan')):.3f} bwd={row['n_bwd']} t={row['time']:.1f}s"
                 print(f"  [{n_img + 1}/{len(indices)}] {name} {spec} s{seed}: {tag}")
+
+
+def attr_path(folder: str, name: str, spec: str, seed: int) -> str:
+    safe = re.sub(r"[^A-Za-z0-9._=+-]+", "_", spec)
+    return os.path.join(folder, f"{name}__{safe}__s{seed}.pt")
+
+
+def save_attr(folder: str, name: str, idx: int, spec: str, seed: int, baseline: str,
+              attr: torch.Tensor) -> None:
+    torch.save({"attr": attr.detach().half().cpu(), "image": name, "index": idx, "method": spec,
+                "seed": seed, "baseline": baseline}, attr_path(folder, name, spec, seed))
 
 
 if __name__ == "__main__":

@@ -156,7 +156,7 @@ def main() -> None:
                     egen = torch.Generator().manual_seed(7_919 + idx)
                     row.update(evaluate(model, x, mask, a_img, bases, 100, prob_model,
                                         infd_n=args.infd_n, infd_sigma=args.infd_sigma,
-                                        road=args.road, gen=egen))
+                                        road=args.road, gen=egen, infd_base=xb))
                 append_row(args.out, row)
 
             for alpha in alphas_needed:
