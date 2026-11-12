@@ -86,7 +86,8 @@ run_sigma() {
 
 run_alpha() {
   python -m experiments.alpha_disagreement $DATA --n 200 --baseline "$BASE" \
-    --alphas 0.1 1 10 100 --K 16 --out "$OUT/alpha_${TAG}.jsonl" --save-maps "$OUT/alpha_maps_${TAG}" \
+    --alphas 0.1 1 10 100 --K 32 --est mid --resolutions element pixel grid:16 grid:32 \
+    --out "$OUT/alpha_${TAG}.jsonl" --save-maps "$OUT/alpha_maps_${TAG}" \
     | tee "$OUT/alpha_${TAG}.txt"
 }
 
