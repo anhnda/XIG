@@ -46,7 +46,8 @@ run_calib() {
     --methods ig guided_ig legacy_guided_ig dnoise pixel_random block14 \
     --seeds $SEEDS --out "$OUT/calib_${TAG}.jsonl"
   python -m experiments.summarize "$OUT/calib_${TAG}.jsonl" --ref ig \
-    --metrics insdel_${BASE} insdel_blur overlap iou pointing checker | tee "$OUT/calib_${TAG}.txt"
+    --metrics insdel_${BASE} insdelp_${BASE} insdel_blur insdelp_blur overlap iou pointing checker \
+    | tee "$OUT/calib_${TAG}.txt"
 }
 
 run_p1() {
