@@ -20,7 +20,8 @@ def _psd(K, seed=0):
 def test_entropic_qp_fixed_point_and_optimality():
     R = _psd(5)
     eps = 0.3
-    q, _ = T.solve_entropic_qp(R, eps)
+    q, info = T.solve_entropic_qp(R, eps)
+    assert info["converged"], info
     assert abs(float(q.sum()) - 1) < 1e-12 and float(q.min()) > 0
     fp = torch.softmax(-2.0 * (R @ q) / eps, dim=0)          # q_k ∝ exp(−2(Rq)_k/ε)
     assert float((fp - q).abs().max()) < 1e-8

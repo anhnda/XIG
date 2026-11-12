@@ -89,18 +89,37 @@ def _xlogx_kl(q: torch.Tensor) -> torch.Tensor:
     return (q * torch.log(K * q.clamp_min(1e-300))).sum()
 
 
-def solve_entropic_qp(R: torch.Tensor, eps: float, iters: int = 20000,
+def qp_stationarity(R: torch.Tensor, q: torch.Tensor, eps: float) -> float:
+    """Optimality measure of q for  qᵀRq + eps·KL(q‖u)  on the simplex.
+    eps > 0: fixed-point residual  max_k |softmax(−2Rq/eps)_k − q_k|  (KKT ⇔ 0)
+    eps = 0: Frank–Wolfe gap  gᵀq − min_k g_k,  g = 2Rq  (≥ f(q) − f*)."""
+    g = 2.0 * (R @ q)
+    if eps > 0:
+        return float((torch.softmax(-g / eps, dim=0) - q).abs().max())
+    return float(g @ q - g.min())
+
+
+def solve_entropic_qp(R: torch.Tensor, eps: float, iters: int = 100000,
                       tol: float = 1e-12) -> tuple[torch.Tensor, dict]:
     """argmin_{q ∈ Δ_K} qᵀRq + eps·KL(q‖u) by entropic mirror descent with
-    backtracking (R symmetric PSD, eps ≥ 0). Convex; unique when eps > 0."""
+    backtracking (R symmetric PSD, eps ≥ 0). Convex; unique when eps > 0.
+    Stops on optimality (qp_stationarity), not on the size of the last step:
+    eps > 0 → residual < tol;  eps = 0 → FW gap < tol·(max|R| + 1e-300)."""
     R = R.double()
     K = R.shape[0]
     q = torch.full((K,), 1.0 / K, dtype=torch.float64)
     obj = lambda v: float(v @ R @ v) + (eps * float(_xlogx_kl(v)) if eps > 0 else 0.0)
     f = obj(q)
-    step = 1.0 / (2.0 * float(R.abs().max()) + eps + 1e-300)
+    # 1/(2 max|R| + eps) is always admissible (relative smoothness w.r.t. entropy),
+    # so backtracking never goes below it (guards against round-off near the optimum)
+    step_safe = 1.0 / (2.0 * float(R.abs().max()) + eps + 1e-300)
+    step = step_safe
+    tol_eff = tol if eps > 0 else tol * (float(R.abs().max()) + 1e-300)
+    stat = qp_stationarity(R, q, eps)
     it = 0
     for it in range(1, iters + 1):
+        if stat < tol_eff:
+            break
         g = 2.0 * (R @ q)
         if eps > 0:
             g = g + eps * (torch.log(K * q.clamp_min(1e-300)) + 1.0)
@@ -109,15 +128,13 @@ def solve_entropic_qp(R: torch.Tensor, eps: float, iters: int = 20000,
             qn = torch.softmax(logq - step * g, dim=0)
             fn = obj(qn)
             kl = float((qn * (torch.log(qn.clamp_min(1e-300)) - logq)).sum())
-            if fn <= f + float(g @ (qn - q)) + kl / step + 1e-14 * (abs(f) + 1.0) or step < 1e-300:
+            if fn <= f + float(g @ (qn - q)) + kl / step + 1e-14 * (abs(f) + 1.0) or step <= step_safe:
                 break
-            step *= 0.5
-        delta = float((qn - q).abs().max())
+            step = max(0.5 * step, step_safe)
         q, f = qn, fn
         step *= 2.0
-        if delta < tol:
-            break
-    return q, {"iters": it, "obj": f}
+        stat = qp_stationarity(R, q, eps)
+    return q, {"iters": it, "obj": f, "stationarity": stat, "converged": stat < tol_eff}
 
 
 def gibbs_weights(S: torch.Tensor, eps: float) -> torch.Tensor:
