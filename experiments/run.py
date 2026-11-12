@@ -8,8 +8,9 @@ Examples
 # ImageNet-Seg, 200 fixed images, black path baseline, ins/del with black and blur
 python -m experiments.run --data seg --seg-mat /path/gtsegs_ijcv.mat --n 200 \
     --index-file runs/seg200.json --baseline black --insdel black blur \
-    --methods ig guided_ig idgi dnoise pixel_random block14 "spi:alpha=10" \
-    --seeds 0 1 2 --out runs/p2.jsonl
+    --methods ig guided_ig idgi dnoise "spi:alpha=1,K=8,est=mid" \
+              "tpa:alpha=1,mode=core,eps=0.1" "kernelshap:M=256" \
+    --infd-n 64 --road --seeds 0 1 2 --out runs/p2.jsonl
 
 # folder of images (masks optional)
 python -m experiments.run --data folder --images ./sample_imagenet1k --n 50 \
@@ -39,6 +40,7 @@ def main() -> None:
     ap.add_argument("--prep", default="resize", choices=["resize", "crop"],
                     help="folder images: resize to 224 (default) or Resize256+CenterCrop224 (legacy)")
     ap.add_argument("--n", type=int, default=200, help="number of images (0 = all)")
+    ap.add_argument("--start", type=int, default=0, help="first position in the index list")
     ap.add_argument("--index-file", default=None, help="JSON list of image indices (created if missing)")
     ap.add_argument("--index-seed", type=int, default=0)
     ap.add_argument("--model", default="resnet50")
@@ -49,7 +51,10 @@ def main() -> None:
                     help="baselines for insertion/deletion (one score set each)")
     ap.add_argument("--insdel-steps", type=int, default=100)
     ap.add_argument("--no-prob", action="store_true",
-                    help="skip the softmax-probability ins/del (insdelp_*)")
+                    help="skip the softmax-probability ins/del (insdelp_*) (ROAD needs it)")
+    ap.add_argument("--infd-n", type=int, default=0, help="infidelity samples (0 = off)")
+    ap.add_argument("--infd-sigma", type=float, default=0.1)
+    ap.add_argument("--road", action="store_true", help="approximate ROAD (MoRF/LeRF)")
     ap.add_argument("--methods", nargs="+", required=True)
     ap.add_argument("--seeds", nargs="+", type=int, default=[0],
                     help="seeds for stochastic methods (deterministic ones use the first)")
@@ -70,7 +75,10 @@ def main() -> None:
         if not args.images:
             ap.error("--images is required for --data folder")
         ds = DATA.FolderImages(args.images, args.masks, size=input_size(args.model), prep=args.prep)
-    indices = DATA.select_indices(len(ds), args.n, args.index_seed, args.index_file)
+    indices = DATA.select_indices(len(ds), args.n, args.index_seed, args.index_file,
+                                  start=args.start)
+    if args.road and args.no_prob:
+        ap.error("--road needs the probability model (drop --no-prob)")
     print(f"[run] {len(indices)} images, {len(args.methods)} methods, device={dev}")
 
     specs = [(s, *resolve(s)) for s in args.methods]
@@ -103,7 +111,10 @@ def main() -> None:
                 if attr is not None:
                     s = float(attr.sum())
                     row.update({"attr_sum": s, "residual": D - s})
-                    row.update(evaluate(model, x, mask, attr, bases, args.insdel_steps, prob_model))
+                    egen = torch.Generator().manual_seed(7_919 + idx)   # same perturbations for every method
+                    row.update(evaluate(model, x, mask, attr, bases, args.insdel_steps, prob_model,
+                                        infd_n=args.infd_n, infd_sigma=args.infd_sigma,
+                                        road=args.road, gen=egen))
                     if args.save_maps:
                         fn_map = os.path.join(args.save_maps,
                                               f"{name}__{spec.replace(':', '_').replace(',', '_')}__s{seed}.pt")

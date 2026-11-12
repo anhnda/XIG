@@ -127,3 +127,90 @@ def checker_energy(attr: torch.Tensor, mask: Optional[torch.Tensor] = None) -> f
     region = torch.ones_like(a, dtype=torch.bool) if mask is None else ~mask.to(a.device).bool()
     den = float((a[region] ** 2).sum())
     return float((hf[region] ** 2).sum()) / den if den > 0 else float("nan")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# infidelity (Yeh et al., NeurIPS 2019) — Gaussian perturbation family
+# ─────────────────────────────────────────────────────────────────────────────
+
+@torch.no_grad()
+def infidelity(model: nn.Module, x: torch.Tensor, attr: torch.Tensor, sigma: float = 0.1,
+               n: int = 64, gen: Optional[torch.Generator] = None, batch_size: int = 16) -> dict:
+    """I ~ N(0, σ² I) in the (normalised) input space,  v = f(x) − f(x − I),  u = Iᵀa.
+        infd_raw  = E[(u − v)²]
+        infd      = min_β E[(βu − v)²] / E[v²]   ∈ [0, 1]   (scale-free; lower is better)
+    A Gaussian-kernel metric: the counterpart of ins/del's binary-mask kernel."""
+    fx = float(model(x).reshape(-1)[0])
+    a = attr.reshape(-1).double()
+    us, vs = [], []
+    done = 0
+    while done < n:
+        b = min(batch_size, n - done)
+        I = torch.randn((b,) + tuple(x.shape[1:]), generator=gen, dtype=torch.float64)
+        I = (I * sigma).to(device=x.device, dtype=x.dtype)
+        fv = model(x - I).double().reshape(-1)
+        vs.append(fx - fv.cpu())
+        us.append((I.reshape(b, -1).double().cpu() @ a.cpu()))
+        done += b
+    u, v = torch.cat(us), torch.cat(vs)
+    raw = float(((u - v) ** 2).mean())
+    uu = float((u * u).sum())
+    beta = float((u * v).sum()) / uu if uu > 0 else 0.0
+    vv = float((v * v).mean())
+    infd = float(((beta * u - v) ** 2).mean()) / vv if vv > 0 else float("nan")
+    return {"infd": infd, "infd_raw": raw, "infd_beta": beta}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ROAD (Rong et al., ICML 2022) — approximate noisy linear imputation
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ROAD_K = torch.tensor([[1 / 12, 1 / 6, 1 / 12],
+                        [1 / 6, 0.0, 1 / 6],
+                        [1 / 12, 1 / 6, 1 / 12]], dtype=torch.float64)
+
+
+def impute_linear(x: torch.Tensor, removed: torch.Tensor, iters: int = 200,
+                  noise: float = 0.01, gen: Optional[torch.Generator] = None) -> torch.Tensor:
+    """Removed pixels (H, W bool) ← weighted mean of their 8 neighbours (ROAD weights
+    1/6 direct, 1/12 diagonal), solved by Jacobi iteration (approximation of ROAD's
+    exact sparse solve), then + N(0, noise²). Kept pixels are unchanged."""
+    _, C, H, W = x.shape
+    k = _ROAD_K.to(device=x.device, dtype=x.dtype).view(1, 1, 3, 3).repeat(C, 1, 1, 1)
+    ones = torch.ones(1, C, H, W, device=x.device, dtype=x.dtype)
+    norm = F.conv2d(ones, k, padding=1, groups=C)                       # border-aware weight sum
+    rem = removed.to(x.device).view(1, 1, H, W).expand(1, C, H, W)
+    keep_mean = x[~rem].mean() if bool((~rem).any()) else x.mean()
+    cur = torch.where(rem, keep_mean.expand_as(x), x)
+    for _ in range(iters):
+        avg = F.conv2d(cur, k, padding=1, groups=C) / norm
+        cur = torch.where(rem, avg, x)
+    if noise > 0:
+        eps = torch.randn(x.shape, generator=gen, dtype=torch.float64).to(device=x.device, dtype=x.dtype)
+        cur = torch.where(rem, cur + noise * eps, cur)
+    return cur
+
+
+@torch.no_grad()
+def road(prob_model: nn.Module, x: torch.Tensor, attr: torch.Tensor,
+         fracs=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9), iters: int = 200,
+         noise: float = 0.01, gen: Optional[torch.Generator] = None) -> dict:
+    """Target-class probability after removing a fraction of pixels and imputing them.
+        road_morf: mean prob, most relevant first  (lower is better)
+        road_lerf: mean prob, least relevant first (higher is better)
+        road     : lerf − morf                      (higher is better)
+    Uses the probability model, not the logit (ROAD reports accuracy/probability)."""
+    _, C, H, W = x.shape
+    order = torch.argsort(attribution_map(attr).flatten(), descending=True).cpu()
+    n = H * W
+    morf, lerf = [], []
+    for fr in fracs:
+        k = int(round(fr * n))
+        rm = torch.zeros(n, dtype=torch.bool)
+        rm[order[:k]] = True
+        morf.append(float(prob_model(impute_linear(x, rm.view(H, W), iters, noise, gen)).reshape(-1)[0]))
+        rl = torch.zeros(n, dtype=torch.bool)
+        rl[order[n - k:]] = True
+        lerf.append(float(prob_model(impute_linear(x, rl.view(H, W), iters, noise, gen)).reshape(-1)[0]))
+    m, l_ = sum(morf) / len(morf), sum(lerf) / len(lerf)
+    return {"road_morf": m, "road_lerf": l_, "road": l_ - m}

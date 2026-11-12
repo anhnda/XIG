@@ -5,7 +5,7 @@ wrappers, per-image evaluation rows, JSONL i/o.
 Method spec syntax (command line):
     name                    e.g. ig, idgi, guided_ig, dnoise, pixel_random
     name:k=v,k=v            e.g. dnoise:spread=0.75,tile=4   ig:N=200,est=gl,Q=4
-    legacy_<m>[:fix_df=1]   original repo code (ig, idig, guided_ig, lig_idig, lig)
+    legacy_<m>[:fix_df=1]   original repo code (ig, idig, guided_ig, blurig)
 """
 
 from __future__ import annotations
@@ -106,8 +106,7 @@ def parse_spec(spec: str) -> tuple[str, dict]:
     return name.strip(), params
 
 
-LEGACY = ("legacy_ig", "legacy_idig", "legacy_guided_ig", "legacy_lig_idig", "legacy_lig",
-          "legacy_blurig")
+LEGACY = ("legacy_ig", "legacy_idig", "legacy_guided_ig", "legacy_blurig")
 
 
 def _legacy_fn(name: str) -> Callable:
@@ -121,12 +120,8 @@ def _legacy_fn(name: str) -> Callable:
             from idig import compute_idig as f
         elif name == "legacy_guided_ig":
             from guided_ig import compute_guided_ig as f
-        elif name == "legacy_lig_idig":
-            from lig_idig import compute_lig_idig as f
-        elif name == "legacy_blurig":
-            from blurig import compute_blurig as f   # copied verbatim from KIG-main
         else:
-            from lig import compute_lig as f
+            from blurig import compute_blurig as f   # copied verbatim from KIG-main
         old = utility.FIX_DF_ALIGNMENT
         utility.FIX_DF_ALIGNMENT = bool(fix_df)
         try:
@@ -147,7 +142,7 @@ def resolve(spec: str) -> tuple[Callable, dict, bool]:
     """spec -> (fn, params, stochastic)."""
     name, params = parse_spec(spec)
     if name in LEGACY:
-        return _legacy_fn(name), params, name in ("legacy_lig",)
+        return _legacy_fn(name), params, False
     fn, base, stoch = M.resolve(name)
     base.update(params)
     if str(base.get("est", "left")).startswith("random") or base.get("path") == "dnoise":
@@ -161,8 +156,11 @@ def resolve(spec: str) -> tuple[Callable, dict, bool]:
 
 def evaluate(model: nn.Module, x: torch.Tensor, mask: Optional[torch.Tensor],
              attr: torch.Tensor, eval_bases: dict, n_steps: int = 100,
-             prob_model: Optional[nn.Module] = None) -> dict:
-    """insdel_<b>: legacy normalised logit AUC; insdelp_<b>: raw softmax-prob AUC."""
+             prob_model: Optional[nn.Module] = None, infd_n: int = 0,
+             infd_sigma: float = 0.1, road: bool = False,
+             gen: Optional[torch.Generator] = None) -> dict:
+    """insdel_<b>: legacy normalised logit AUC; insdelp_<b>: raw softmax-prob AUC;
+    optional infidelity (Gaussian kernel, infd_n samples) and approximate ROAD."""
     row = {}
     for b, base in eval_bases.items():
         s = MET.insertion_deletion(model, x, base, attr, n_steps=n_steps)
@@ -173,6 +171,12 @@ def evaluate(model: nn.Module, x: torch.Tensor, mask: Optional[torch.Tensor],
     if mask is not None:
         row.update(MET.localisation(attr, mask))
     row["checker"] = MET.checker_energy(attr, mask)
+    if infd_n > 0:
+        row.update(MET.infidelity(model, x, attr, sigma=infd_sigma, n=infd_n, gen=gen))
+    if road:
+        if prob_model is None:
+            raise ValueError("ROAD needs the probability model")
+        row.update(MET.road(prob_model, x, attr, gen=gen))
     return row
 
 
@@ -209,6 +213,7 @@ def add_data_args(ap) -> None:
     ap.add_argument("--masks", default=None)
     ap.add_argument("--prep", default="resize", choices=["resize", "crop"])
     ap.add_argument("--n", type=int, default=50)
+    ap.add_argument("--start", type=int, default=0, help="skip the first images of the index list")
     ap.add_argument("--index-file", default=None)
     ap.add_argument("--index-seed", type=int, default=0)
     ap.add_argument("--model", default="resnet50")
@@ -226,7 +231,8 @@ def open_data(args):
         ds = DATA.ImageNetSeg(args.seg_mat, size=size)
     else:
         ds = DATA.FolderImages(args.images, args.masks, size=size, prep=args.prep)
-    idx = DATA.select_indices(len(ds), args.n, args.index_seed, args.index_file)
+    idx = DATA.select_indices(len(ds), args.n, args.index_seed, args.index_file,
+                              start=getattr(args, "start", 0))
     return dev, backbone, DATA.iterate(ds, idx), len(idx)
 
 

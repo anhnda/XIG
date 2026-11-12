@@ -105,68 +105,6 @@ def idgi(oracle: Oracle, xb, x, gen=None, N: int = 50, node: str = "left") -> At
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LIG Phase 1 (μ only, "LIG-IDIG") with a choice of gradient node and path
-# ─────────────────────────────────────────────────────────────────────────────
-
-def project_simplex(v: torch.Tensor) -> torch.Tensor:
-    """Euclidean projection onto {μ ≥ 0, Σμ = 1}."""
-    u, _ = torch.sort(v, descending=True)
-    css = u.cumsum(0) - 1.0
-    k = torch.arange(1, v.numel() + 1, device=v.device, dtype=v.dtype)
-    rho = int((u - css / k > 0).nonzero().max())
-    return (v - css[rho] / (rho + 1)).clamp(min=0.0)
-
-
-def lig_mu(oracle: Oracle, xb, x, gen=None, N: int = 50, node: str = "left",
-           mu: str = "adam", lam: float = 1.0, tau: float = 0.01, mu_iter: int = 300,
-           path: str = "straight", rescale: bool = True) -> Attribution:
-    """
-    A = Σ_k μ_k g_k ⊙ h_k  (then multiplicative rescale, as in the paper),
-    g_k taken at γ_k + u·h_k, u = 0 / 0.5 / 1 for node = left / mid / right.
-    μ: 'adam'  → utility.optimize_mu_signal_harvesting (paper's Phase 1)
-       'proj'  → Proj_simplex((λ/τ)|d|), the closed-form optimum without Var
-       'uniform' → μ_k = 1/N (IG / dnoise with that node)
-    path: 'straight' or 'dnoise' (dither defaults, N steps, drawn with gen).
-    node='left', mu='adam', path='straight' ≡ legacy LIG-IDIG with aligned Δf.
-    """
-    u = {"left": 0.0, "mid": 0.5, "right": 1.0}[node]
-    if path == "straight":
-        pts = paths.straight(xb, x, N)
-    elif path == "dnoise":
-        pts = paths.dither(xb, x, N, gen=gen)
-    else:
-        raise ValueError(f"unknown path '{path}'")
-    f = oracle.f(pts)
-    df = f[1:] - f[:-1]
-    h = pts[1:] - pts[:-1]
-    _, g = oracle.grad(pts[:-1] + u * h)
-    gh = g * h
-    d = gh.flatten(1).sum(1)
-
-    if mu == "adam":
-        import utility  # legacy optimiser (repo root)
-        w = utility.optimize_mu_signal_harvesting(
-            d.detach().float().cpu(), df.detach().float().cpu(),
-            lam=lam, tau=tau, n_iter=mu_iter).to(device=x.device, dtype=x.dtype)
-    elif mu == "proj":
-        w = project_simplex((lam / tau) * d.abs().double()).to(x.dtype)
-    elif mu == "uniform":
-        w = torch.full((N,), 1.0 / N, device=x.device, dtype=x.dtype)
-    else:
-        raise ValueError(f"unknown mu '{mu}'")
-
-    attr = (w.view(-1, 1, 1, 1) * gh).sum(dim=0, keepdim=True)
-    D = float(f[-1] - f[0])
-    s = float(attr.sum())
-    if rescale and abs(s) > 1e-12:
-        attr = attr * (D / s)
-    info = {"node": node, "mu_mode": mu, "path": path,
-            "mu_argmax": int(w.argmax()), "mu_support": int((w > 1e-3).sum()),
-            "transition_step": int(df.abs().argmax()), "raw_sum": s}
-    return Attribution(attr, info)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Guided IG (Kapishnikov et al., CVPR 2021) — faithful port of the PAIR
 # reference implementation (saliency/core/guided_ig.py, no anchors)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -254,8 +192,12 @@ def dither(oracle: Oracle, xb, x, gen=None, N: int = 24, thresh: str = "bayer",
 
 
 def smooth_ig(oracle: Oracle, xb, x, gen=None, N: int = 24, sigma: float = 0.3,
-              mode: str = "clean", K: int = 1) -> Attribution:
-    """Straight line with per-element jitter ε_k ~ N(0, σ²|Δx|²) at interior points.
+              mode: str = "clean", K: int = 1, unit: str = "delta") -> Attribution:
+    """Straight line with per-element jitter at interior points.
+
+    unit='delta' : ε_k ~ N(0, σ²|Δx|²)  (legacy: scales with |x − x'|, collapses
+                   with a black baseline, proposition 4)
+    unit='abs'   : ε_k ~ N(0, σ²)       σ in input units (normalised pixel space)
 
     γ̃_k = γ_k + ε_k (ε_0 = ε_N = 0), g_k = ∇f(γ̃_k).
       mode='clean'      Σ g_k ⊙ (γ_{k+1} − γ_k)      smoothed-gradient IG (has a limit as N→∞)
@@ -271,7 +213,12 @@ def smooth_ig(oracle: Oracle, xb, x, gen=None, N: int = 24, sigma: float = 0.3,
     for _ in range(max(1, int(K))):
         eps = torch.randn((N + 1,) + tuple(x.shape[1:]), generator=gen,
                           dtype=torch.float64).to(device=x.device, dtype=x.dtype)
-        eps = eps * sigma * (x - xb).abs()
+        if unit == "delta":
+            eps = eps * sigma * (x - xb).abs()
+        elif unit == "abs":
+            eps = eps * sigma
+        else:
+            raise ValueError(f"unknown unit '{unit}'")
         eps[0] = 0.0
         eps[N] = 0.0
         _, g = oracle.grad((pts + eps)[:-1])
@@ -282,7 +229,7 @@ def smooth_ig(oracle: Oracle, xb, x, gen=None, N: int = 24, sigma: float = 0.3,
         else:
             h = h_clean + eps[1:] - eps[:-1]
         acc = acc + (g * h).sum(dim=0, keepdim=True)
-    return Attribution(acc / max(1, int(K)), {"sigma": sigma, "mode": mode})
+    return Attribution(acc / max(1, int(K)), {"sigma": sigma, "mode": mode, "unit": unit})
 
 
 def spi(oracle: Oracle, xb, x, gen=None, N: int = 24, alpha: float = 10.0,
@@ -294,17 +241,87 @@ def spi(oracle: Oracle, xb, x, gen=None, N: int = 24, alpha: float = 10.0,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TPA and KernelSHAP (image wrappers around pathattr.tpa / pathattr.masks)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _specs(parts: str) -> list[str]:
+    """'slic:64+grid:28:14:14' -> ['slic:64', 'grid:28:14:14'] ('+' joins partitions)."""
+    return [p for p in str(parts).split("+") if p]
+
+
+def tpa(oracle: Oracle, xb, x, gen=None, alpha: float = 1.0, K: int = 8, N: int = 24,
+        est: str = "mid", Q: int = 1, per_channel: bool = True, completion: str = "support",
+        eta: float = 0.0, parts: str = "slic:64", M: int = 256, family: str = "shapley",
+        mode: str = "core", eps: float = 0.1, kappa: float = 1.0, K_cv: int = 8) -> Attribution:
+    """Entropic path aggregation over K SPI(α) paths, fitted on M masks.
+
+    mode: uniform (SPI) | gibbs | core | r   — see pathattr.tpa.
+    completion: support (default, keeps Dummy) | rescale | none | cv (est → random_cv).
+    Same seed + same (alpha, K, N, est, parts, M, family) ⇒ identical candidates
+    and masks across modes, so variants are paired.
+    """
+    from . import masks as MK
+    from . import tpa as T
+    from .complete import complete_stack, support_scale
+
+    D = oracle.endpoint_gap(xb, x)
+    if completion == "cv":
+        est = "random_cv"
+    A_raw = T.spi_image_candidates(oracle, xb, x, gen, alpha, K, N, est, Q, per_channel, K_cv, D)
+    lam = support_scale(A_raw)
+    A, cinfo = complete_stack(A_raw, D, "none" if completion == "cv" else completion, eta, lam)
+    ms = MK.build_masks(oracle, x, xb, _specs(parts), M, gen, family)
+    feat, F = T.image_feat(x)
+    game = T.Game(B=ms.B(), y=ms.y, feat=feat, F=F, D=D)
+    a, q, info = T.fit(A, game, mode, eps, kappa, lam)
+    info.update({"alpha": alpha, "K": K, "N": N, "est": est, "completion": completion,
+                 "parts": parts, "n_groups": [g[2] for g in ms.groups],
+                 "max_abs_residual_before": max(abs(v) for v in cinfo["residual_before"]),
+                 "support_size": cinfo["support_size"]})
+    return Attribution(a.view_as(x).to(device=x.device, dtype=x.dtype), info)
+
+
+def kernelshap(oracle: Oracle, xb, x, gen=None, parts: str = "slic:64", M: int = 256,
+               family: str = "shapley", ridge: float = 1e-10) -> Attribution:
+    """KernelSHAP on the first partition in `parts` (no path prior).
+    Group value φ_g is spread uniformly over its pixels and channels."""
+    from . import masks as MK
+
+    D = oracle.endpoint_gap(xb, x)
+    spec = _specs(parts)[0]
+    ms = MK.build_masks(oracle, x, xb, [spec], M, gen, family)
+    attr, G = kernelshap_from_masks(ms, x, D, ridge)
+    return Attribution(attr, {"G": G, "parts": spec, "M": M})
+
+
+def kernelshap_from_masks(ms, x: torch.Tensor, D: float, ridge: float = 1e-10
+                          ) -> tuple[torch.Tensor, int]:
+    """KernelSHAP on partition 0 of a MaskSet (rows with origin 0), spread to pixels."""
+    from . import tpa as T
+    _, lbl, G = ms.groups[0]
+    rows = ms.origin == 0
+    phi = T.kernelshap(ms.gmask[0].double(), ms.y[rows], D, ridge=ridge)    # (G,)
+    lbl_c = lbl.flatten().cpu()
+    n_g = torch.bincount(lbl_c, minlength=G).double()
+    _, C, H, W = x.shape
+    pix = (phi / n_g.clamp_min(1.0))[lbl_c].view(1, 1, H, W) / C
+    attr = pix.expand(1, C, H, W).contiguous().to(device=x.device, dtype=x.dtype)
+    return attr, G
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # registry
 # ─────────────────────────────────────────────────────────────────────────────
 
 METHODS: dict[str, Callable[..., Attribution]] = {
     "ig": ig,
     "idgi": idgi,
-    "lig_mu": lig_mu,
     "guided_ig": guided_ig,
     "dither": dither,
     "spi": spi,
     "smooth_ig": smooth_ig,
+    "tpa": tpa,
+    "kernelshap": kernelshap,
 }
 
 # presets: name -> (method, default params). Params given on the command line
@@ -314,9 +331,10 @@ PRESETS: dict[str, tuple[str, dict]] = {
     "pixel_random":  ("dither", dict(N=24, thresh="random", spread=1.0)),
     "pixel_strat":   ("dither", dict(N=24, thresh="stratified", tile=8, spread=1.0)),
     "block14":       ("dither", dict(N=24, thresh="block", block=14, spread=1.0)),
+    "noise_only":    ("smooth_ig", dict(mode="noise_only")),
 }
 
-STOCHASTIC = {"dither", "spi", "smooth_ig"}
+STOCHASTIC = {"dither", "spi", "smooth_ig", "tpa", "kernelshap"}
 
 
 def resolve(name: str) -> tuple[Callable[..., Attribution], dict, bool]:

@@ -48,16 +48,21 @@ def segment_nodes(kind: str, N: int, Q: int = 1,
 
 def integrate(oracle: Oracle, pts: torch.Tensor,
               nodes: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
-    """Σ_k Σ_q w_kq ∇f(γ_k + u_kq h_k) ⊙ h_k  →  (1, C, H, W)."""
+    """Σ_k Σ_q w_kq ∇f(γ_k + u_kq h_k) ⊙ h_k  →  (1, *feature_shape).
+
+    pts: (N+1, *feature_shape), any number of feature dims
+    (images (N+1, C, H, W), token embeddings (N+1, L, h), …).
+    """
     N = pts.shape[0] - 1
+    bshape = (N,) + (1,) * (pts.dim() - 1)
     h = pts[1:] - pts[:-1]
     nodes = nodes.to(device=pts.device, dtype=pts.dtype)
     weights = weights.to(device=pts.device, dtype=pts.dtype)
     attr = torch.zeros_like(pts[:1])
     for q in range(nodes.shape[1]):
-        P = pts[:-1] + nodes[:, q].view(N, 1, 1, 1) * h
+        P = pts[:-1] + nodes[:, q].view(bshape) * h
         _, g = oracle.grad(P)
-        attr += (weights[:, q].view(N, 1, 1, 1) * g * h).sum(dim=0, keepdim=True)
+        attr += (weights[:, q].view(bshape) * g * h).sum(dim=0, keepdim=True)
     return attr
 
 
