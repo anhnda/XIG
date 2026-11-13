@@ -24,7 +24,8 @@
 #
 # env: BASE=black|gray (path + ins/del baseline, default black), MODEL=resnet50, SEEDS="0 1 2",
 #      PARTS (TPA fit partitions, default slic:64 — needs scikit-image; use grid:28 without it),
-#      KN (budget split used by tpa_test, default "8 24")
+#      KN (budget split used by tpa_test, default "8 24"),
+#      NIMG (override the number of images of any stage: smoke test with NIMG=2 SEEDS=0)
 set -euo pipefail
 
 MAT=${1:?usage: run_all.sh /path/to/gtsegs_ijcv.mat <stage> [out_dir]}
@@ -49,7 +50,7 @@ TAG="${MODEL}_${BASE}"
 run_test() { python -m pytest -q tests; }
 
 run_calib() {
-  python -m experiments.run $DATA --n 200 --baseline "$BASE" --insdel "$BASE" blur \
+  python -m experiments.run $DATA --n ${NIMG:-200} --baseline "$BASE" --insdel "$BASE" blur \
     --methods ig guided_ig legacy_guided_ig dnoise pixel_random block14 \
     --seeds $SEEDS --out "$OUT/calib_${TAG}.jsonl"
   python -m experiments.summarize "$OUT/calib_${TAG}.jsonl" --ref ig \
@@ -60,7 +61,7 @@ run_calib() {
 run_p1() {
   for P in dnoise "spi:alpha=0.01" "spi:alpha=1"; do
     F=$(echo "$P" | tr ':=' '__')
-    python -m experiments.p1_estimators $DATA --n 200 --baseline "$BASE" --insdel "$BASE" \
+    python -m experiments.p1_estimators $DATA --n ${NIMG:-200} --baseline "$BASE" --insdel "$BASE" \
       --path "$P" --seeds $SEEDS --out "$OUT/p1_${F}_${TAG}.jsonl"
     python -m experiments.summarize "$OUT/p1_${F}_${TAG}.jsonl" --ref "${P}|gl" \
       --metrics insdel_${BASE} iou residual rel_err_vs_gl spearman_vs_gl | tee "$OUT/p1_${F}_${TAG}.txt"
@@ -69,7 +70,7 @@ run_p1() {
 
 run_p2() {
   # equal budget ≈192 backward + cheap variants at 24/50 backward; full attributions saved
-  python -m experiments.run $DATA --n 200 --baseline "$BASE" --insdel "$BASE" blur \
+  python -m experiments.run $DATA --n ${NIMG:-200} --baseline "$BASE" --insdel "$BASE" blur \
     --methods "ig:N=50" "ig:N=192,est=mid" "idgi:N=192,node=mid" guided_ig legacy_blurig dnoise \
               "dnoise:K=8,est=mid" "spi:alpha=10,K=1,est=mid" \
               "smooth_ig:N=24,K=8,sigma=0.3,unit=abs" "noise_only:N=24,K=8,sigma=0.3,unit=abs" \
@@ -83,7 +84,7 @@ run_p2() {
 
 run_infd() {
   for S in 0.3 1.0; do
-    python -m experiments.reeval $DATA --n 200 --attr-dir "$OUT/attr_p2_${TAG}" --insdel \
+    python -m experiments.reeval $DATA --n ${NIMG:-200} --attr-dir "$OUT/attr_p2_${TAG}" --insdel \
       --infd-n 64 --infd-cell 16 --infd-sigma $S --out "$OUT/p2_infd16_s${S}_${TAG}.jsonl"
     python -m experiments.summarize "$OUT/p2_infd16_s${S}_${TAG}.jsonl" --ref "dnoise:K=8,est=mid" \
       --metrics infd | tee "$OUT/p2_infd16_s${S}_${TAG}.txt"
@@ -91,7 +92,7 @@ run_infd() {
 }
 
 run_axis() {
-  python -m experiments.run $DATA --n 200 --baseline "$BASE" --insdel "$BASE" blur \
+  python -m experiments.run $DATA --n ${NIMG:-200} --baseline "$BASE" --insdel "$BASE" blur \
     --methods "spi:alpha=10,K=8,est=mid" "spi:alpha=100,K=8,est=mid" "spi:alpha=300,K=8,est=mid" \
               "spi:alpha=1000,K=8,est=mid" "spi:alpha=10000,K=8,est=mid" "spi:alpha=100000,K=8,est=mid" \
               "ig:N=24,est=mid" \
@@ -104,7 +105,7 @@ run_axis() {
 
 run_sigma() {
   for B in black gray; do
-    python -m experiments.run $DATA --n 100 --baseline "$B" --insdel "$B" \
+    python -m experiments.run $DATA --n ${NIMG:-100} --baseline "$B" --insdel "$B" \
       --methods "smooth_ig:N=24,K=8,unit=abs,sigma=0.05" "smooth_ig:N=24,K=8,unit=abs,sigma=0.1" \
                 "smooth_ig:N=24,K=8,unit=abs,sigma=0.2" "smooth_ig:N=24,K=8,unit=abs,sigma=0.4" \
                 "smooth_ig:N=24,K=8,unit=abs,sigma=0.8" "smooth_ig:N=24,K=8,unit=delta,sigma=0.3" \
@@ -116,7 +117,7 @@ run_sigma() {
 }
 
 run_alpha() {
-  python -m experiments.alpha_disagreement $DATA --n 50 --baseline "$BASE" \
+  python -m experiments.alpha_disagreement $DATA --n ${NIMG:-50} --baseline "$BASE" \
     --alphas 1 10 100 1000 --K 32 --est mid --resolutions element pixel grid:16 grid:32 \
     --out "$OUT/alpha_${TAG}.jsonl" --save-maps "$OUT/alpha_maps_${TAG}" \
     | tee "$OUT/alpha_${TAG}.txt"
@@ -124,7 +125,7 @@ run_alpha() {
 
 run_tpa_calib() {
   for kn in "${KNS[@]}"; do set -- $kn
-    python -m experiments.tpa_sweep $DATA --start 0 --n 50 --baseline "$BASE" --parts "$PARTS" \
+    python -m experiments.tpa_sweep $DATA --start 0 --n ${NIMG:-50} --baseline "$BASE" --parts "$PARTS" \
       --alphas $ALPHAS_TPA --K $1 --N $2 --eps 1 0.1 0.01 0 --kappas 1 --seeds 0 \
       --out "$OUT/tpa_calib_${TAG}_K$1.jsonl"
   done
@@ -140,7 +141,7 @@ run_tpa_select() {
 run_tpa_test() {
   set -- $KN
   CH="$OUT/tpa_chosen_${TAG}_K$1.json"
-  python -m experiments.tpa_sweep $DATA --start 50 --n 150 --baseline "$BASE" --parts "$PARTS" \
+  python -m experiments.tpa_sweep $DATA --start 50 --n ${NIMG:-150} --baseline "$BASE" --parts "$PARTS" \
     --alphas $ALPHAS_TPA --K $1 --N $2 --eps 1 0.1 0.01 0 --kappas 1 --seeds $SEEDS \
     --variants-file "$CH" --eval --insdel "$BASE" blur --infd-n 64 --infd-cell 16 --road \
     --out "$OUT/tpa_test_${TAG}_K$1.jsonl"
@@ -166,7 +167,7 @@ run_agree() {
 
 run_nlp() {
   M_TAG=$(echo "$MODEL_NLP" | tr '/' '_')
-  python -m experiments.nlp.run_nlp --dataset sst2 --model "$MODEL_NLP" --n 872 --max-len 128 \
+  python -m experiments.nlp.run_nlp --dataset sst2 --model "$MODEL_NLP" --n ${NIMG:-872} --max-len 128 \
     --methods "ig:N=50" "ig:N=192" "spi:alpha=1" "spi:alpha=10" "spi:alpha=100" \
               "smooth:sigma=0.05" "smooth:sigma=0.1" "smooth:sigma=0.2" \
               "tpa:alpha=10,mode=uniform" "tpa:alpha=10,mode=gibbs,eps=0.1" \
