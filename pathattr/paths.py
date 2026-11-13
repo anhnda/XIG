@@ -218,7 +218,8 @@ def dp_grid_cdf(P: int, N: int, alpha: float, gen: Optional[torch.Generator] = N
     w = np.exp(logg)
     w /= w.sum(axis=1, keepdims=True)
     F = np.concatenate([np.zeros((P, 1)), np.cumsum(w, axis=1)], axis=1)
-    F[:, -1] = 1.0
+    np.minimum(F, 1.0, out=F)          # round-off: cumsum may exceed 1 by ~1e-16
+    F[:, -1] = 1.0                      # stays monotone: every earlier value is ≤ 1
     return torch.from_numpy(F)
 
 

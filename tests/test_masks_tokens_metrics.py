@@ -106,7 +106,11 @@ def test_infidelity_and_road_run():
     bb = ToyBackbone().eval()
     pm = TargetProb(bb, 1)
     attr = torch.randn(x.shape, generator=torch.Generator().manual_seed(0), dtype=torch.float64)
-    r = MET.infidelity(model, x, attr, sigma=0.1, n=32, gen=torch.Generator().manual_seed(0))
+    for cell in (0, 4):
+        r = MET.infidelity(model, x, attr, sigma=0.1, n=32, gen=torch.Generator().manual_seed(0),
+                           base=xb, mode="delta", cell=cell)
+        assert 0.0 <= r["infd"] <= 1.0 + 1e-9 and r["infd_cell"] == cell
+    r = MET.infidelity(model, x, attr, sigma=0.1, n=32, gen=torch.Generator().manual_seed(0), mode="abs")
     assert 0.0 <= r["infd"] <= 1.0 + 1e-9
     rd = MET.road(pm, x, attr, fracs=(0.25, 0.5), iters=10, gen=torch.Generator().manual_seed(0))
     assert all(0.0 <= rd[k] <= 1.0 for k in ("road_morf", "road_lerf"))
