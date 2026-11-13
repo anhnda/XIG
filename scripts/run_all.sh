@@ -11,7 +11,7 @@
 #               ins/del, localisation, infidelity, approximate ROAD; attributions saved
 #   infd        re-evaluate p2's saved attributions: infidelity per 16 px cell, σ = 0.3 and 1.0
 #   axis        SPI α axis with the EXACT Dirichlet sampler: α = 10 … 1e5 vs IG (α = ∞)
-#   tpa_calib   TPA sweep on images 0–49 for each budget split (K, N) ∈ {8·24, 16·12, 32·6}, α ∈ {10, 30, 100}
+#   tpa_calib   TPA sweep on images 0–49 for each budget split (K, N) ∈ {8·24, 16·12, 32·6}, α ∈ {1, 3, 10, 30, 100}
 #   tpa_select  choose α / ε per family and per (K, N) by held-out fidelity
 #   alpha       E1: within-α spread vs debiased between-α gap (run with MODEL=vit_b_16, swin_b too)
 #   tpa_test    chosen variants on images 50–199, all metrics   (KN="8 24" picks the split)
@@ -38,7 +38,7 @@ PARTS=${PARTS:-"slic:64"}
 MODEL_NLP=${MODEL_NLP:-"textattack/bert-base-uncased-SST-2"}
 KN=${KN:-"8 24"}
 KNS=("8 24" "16 12" "32 6")
-ALPHAS_TPA="10 30 100"
+ALPHAS_TPA="1 3 10 30 100"
 
 cd "$(dirname "$0")/.."
 mkdir -p "$OUT"
