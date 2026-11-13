@@ -50,7 +50,9 @@ def main() -> None:
     ap.add_argument("--Q", type=int, default=8, help="Gauss–Legendre nodes per segment")
     ap.add_argument("--max-shapley-d", type=int, default=16)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--device", default=None, help="default: cuda if available")
     args = ap.parse_args()
+    print(f"[theory] device={TH.set_device(args.device)}")
 
     for d in args.ds:
         for name in args.toys:
@@ -58,7 +60,7 @@ def main() -> None:
             ig = TH.ig_exact(F, d)
             sh = TH.shapley_exact(F, d) if d <= args.max_shapley_d else None
             C1 = TH.spi_correction(F, d, alpha=0.0)              # (α+1)·C, α-free
-            D = float(F(torch.ones(d, dtype=TH.DT)) - F(torch.zeros(d, dtype=TH.DT)))
+            D = float(F(TH.ones(d)) - F(0 * TH.ones(d)))
             print(f"\n=== toy {name}  (d={d}, seed={args.seed}, D={D:+.4f})")
             print(f"IG      {fmt(ig)}   |IG|={float(ig.norm()):.4f}")
             if sh is not None:

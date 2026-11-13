@@ -1,6 +1,7 @@
 """Deterministic checks of the SPI small-noise correction (fast; the Monte-Carlo check
 of the full claim is experiments/verify_spi_expansion.py)."""
 
+import pytest
 import torch
 
 from pathattr import theory as TH
@@ -76,6 +77,32 @@ def test_ridge_correction_needs_unequal_weights():
     for name, mk in TH.TOYS.items():
         C = TH.spi_correction(mk(6, 1), 6, 3.0)
         assert abs(float(C.sum())) < 1e-10, name
+
+
+def test_batched_equals_single():
+    for fam in ("mlp", "satint", "multilinear"):
+        fn, P = TH.stack_params(fam, 5, [0, 3, 7])
+        ig, C, sh = TH.ig_batch(fn, P, 5), TH.correction_batch(fn, P, 5, 4.0), TH.shapley_batch(fn, P, 5)
+        for k, s in enumerate([0, 3, 7]):
+            F = TH.TOYS[fam](5, s)
+            assert torch.allclose(ig[k], TH.ig_exact(F, 5), atol=1e-10), fam
+            assert torch.allclose(C[k], TH.spi_correction(F, 5, 4.0), atol=1e-10), fam
+            assert torch.allclose(sh[k], TH.shapley_exact(F, 5), atol=1e-10), fam
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_dp_cdf_cuda_moments_and_monotone():
+    TH.set_device("cuda")
+    try:
+        alpha, N = 3.0, 8
+        F = TH.dp_cdf(200000, N, alpha, torch.Generator().manual_seed(0)).cpu()
+        assert float((F[:, 1:] - F[:, :-1]).min()) >= 0 and float(F[:, -1].min()) == 1.0
+        t = torch.arange(N + 1, dtype=torch.float64) / N
+        assert float((F.mean(0) - t).abs().max()) < 3e-3
+        var = t * (1 - t) / (alpha + 1)
+        assert float((F.var(0) - var).abs().max()) < 3e-3
+    finally:
+        TH.set_device("cpu")
 
 
 def test_third_derivative_symmetric():
