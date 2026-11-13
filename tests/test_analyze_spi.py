@@ -22,7 +22,7 @@ def test_profile_stats_monotone_and_not():
     g = torch.tensor([0.0, 2.0, 1.0, 1.0])                # overshoot then come back
     s = AN.profile_stats(g)
     assert abs(s["tv"] - 3.0) < 1e-12 and abs(s["neg"] - 1 / 3) < 1e-12
-    e = AN.profile_stats(torch.linspace(0, 1, 11))
+    e = AN.profile_stats(torch.linspace(0, 1, 11, dtype=torch.float64))
     assert abs(e["ent"] - 1.0) < 1e-12 and abs(e["area"] - 0.5) < 1e-12
 
 

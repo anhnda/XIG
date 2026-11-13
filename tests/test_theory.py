@@ -41,9 +41,14 @@ def test_polygon_integral_straight_equals_ig_and_complete():
     S = t.expand(1, d, N + 1).clone()
     a = TH._polygon_integral(gF, S, u, wq)[0]
     assert torch.allclose(a, TH.ig_exact(F, d), atol=1e-9)
-    mc = TH.spi_monte_carlo(F, d, alpha=3.0, n_paths=64, N=N, Q=8,
-                            gen=torch.Generator().manual_seed(0))
-    assert abs(mc["residual"]) < 1e-9                     # every path is complete
+    # every path is complete up to the per-segment quadrature error (GL is exact only for
+    # polynomials; at α = 3 a segment can jump across most of [0, 1]): Q = 8 → ~1e-7
+    res = {}
+    for Q in (8, 16):
+        mc = TH.spi_monte_carlo(F, d, alpha=3.0, n_paths=64, N=N, Q=Q,
+                                gen=torch.Generator().manual_seed(0))
+        res[Q] = abs(mc["residual"])
+    assert res[8] < 1e-5 and res[16] < 1e-8 and res[16] < res[8] / 100
 
 
 def test_third_derivative_symmetric():
