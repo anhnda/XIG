@@ -29,6 +29,7 @@ from __future__ import annotations
 import math
 from typing import Optional
 
+import numpy as np
 import torch
 
 
@@ -202,6 +203,25 @@ def _stick_breaking_cdf(P: int, N: int, alpha: float, K: int,
     return F / F[:, -1:].clamp_min(1e-300)              # renormalise the truncation
 
 
+def dp_grid_cdf(P: int, N: int, alpha: float, gen: Optional[torch.Generator] = None) -> torch.Tensor:
+    """EXACT law of F_G(k/N), k = 0 … N, for P independent G ~ DP(α, U(0,1)):
+    the masses of the N equal bins are Dirichlet(α/N, …, α/N) — no truncation,
+    valid for every α (stick-breaking with a capped number of atoms is not:
+    α = 1000 with 256 atoms behaves like α ≈ 250).
+    Small shapes a = α/N are sampled in log space: G(a) = G(a+1) · U^{1/a}.
+    Randomness comes from `gen` (a numpy Generator seeded from it). (P, N+1) float64."""
+    seed = int(torch.randint(0, 2 ** 62, (1,), generator=gen))
+    rng = np.random.default_rng(seed)
+    a = float(alpha) / N
+    logg = np.log(rng.gamma(a + 1.0, size=(P, N))) + np.log(rng.random((P, N)) + 1e-300) / a
+    logg -= logg.max(axis=1, keepdims=True)
+    w = np.exp(logg)
+    w /= w.sum(axis=1, keepdims=True)
+    F = np.concatenate([np.zeros((P, 1)), np.cumsum(w, axis=1)], axis=1)
+    F[:, -1] = 1.0
+    return torch.from_numpy(F)
+
+
 def spi(
     xb: torch.Tensor,
     x: torch.Tensor,
@@ -212,19 +232,27 @@ def spi(
     max_atoms: int = 256,
     chunk: int = 16384,
     gen: Optional[torch.Generator] = None,
+    sampler: str = "dirichlet",
 ) -> torch.Tensor:
-    """γ_i(t) = x'_i + F_{G_i}(t)(x_i − x'_i), G_i ~ SBP(U(0,1), α).
+    """γ_i(t) = x'_i + F_{G_i}(t)(x_i − x'_i), G_i ~ DP(α, U(0,1)).
 
-    Atoms are truncated so the expected leftover stick mass is ≤ `tail`.
+    sampler='dirichlet' (default): exact bin masses, any α.
+    sampler='stick': legacy truncated stick-breaking (≤ max_atoms atoms; wrong for
+    α ≳ max_atoms / log(1/tail), kept only to reproduce old runs).
     Small α → each feature jumps at one random time (hard random order);
-    large α → close to the straight line.
+    large α → close to the straight line (α → ∞ is IG).
     """
     shape = tuple(x.shape[1:]) if per_channel else (1,) + tuple(x.shape[2:])
     P = int(math.prod(shape))
-    K = int(math.ceil(math.log(1.0 / tail) / math.log1p(1.0 / alpha)))
-    K = max(8, min(K, max_atoms))
-    parts = [_stick_breaking_cdf(min(chunk, P - i), N, alpha, K, gen)
-             for i in range(0, P, chunk)]
+    if sampler == "dirichlet":
+        parts = [dp_grid_cdf(min(chunk, P - i), N, alpha, gen) for i in range(0, P, chunk)]
+    elif sampler == "stick":
+        K = int(math.ceil(math.log(1.0 / tail) / math.log1p(1.0 / alpha)))
+        K = max(8, min(K, max_atoms))
+        parts = [_stick_breaking_cdf(min(chunk, P - i), N, alpha, K, gen)
+                 for i in range(0, P, chunk)]
+    else:
+        raise ValueError(f"unknown sampler '{sampler}'")
     F = torch.cat(parts, dim=0)                          # (P, N+1)
     s = F.t().contiguous().view((N + 1,) + shape).to(device=x.device, dtype=x.dtype)
     s[0] = 0.0

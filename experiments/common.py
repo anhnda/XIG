@@ -159,7 +159,7 @@ def evaluate(model: nn.Module, x: torch.Tensor, mask: Optional[torch.Tensor],
              prob_model: Optional[nn.Module] = None, infd_n: int = 0,
              infd_sigma: float = 0.1, road: bool = False,
              gen: Optional[torch.Generator] = None, infd_base: Optional[torch.Tensor] = None,
-             infd_mode: str = "delta") -> dict:
+             infd_mode: str = "delta", infd_cell: int = 16) -> dict:
     """insdel_<b>: legacy normalised logit AUC; insdelp_<b>: raw softmax-prob AUC;
     optional infidelity (Gaussian kernel, infd_n samples) and approximate ROAD."""
     row = {}
@@ -174,7 +174,7 @@ def evaluate(model: nn.Module, x: torch.Tensor, mask: Optional[torch.Tensor],
     row["checker"] = MET.checker_energy(attr, mask)
     if infd_n > 0:
         row.update(MET.infidelity(model, x, attr, sigma=infd_sigma, n=infd_n, gen=gen,
-                                  base=infd_base, mode=infd_mode))
+                                  base=infd_base, mode=infd_mode, cell=infd_cell))
     if road:
         if prob_model is None:
             raise ValueError("ROAD needs the probability model")

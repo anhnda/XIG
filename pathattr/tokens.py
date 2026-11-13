@@ -63,10 +63,9 @@ def straight_sched(F: int, N: int) -> torch.Tensor:
 
 def spi_sched(F: int, N: int, alpha: float, gen: Optional[torch.Generator] = None,
               tail: float = 1e-4, max_atoms: int = 256) -> torch.Tensor:
-    """(N+1, F): CDF of an independent stick-breaking measure per token."""
-    Ka = int(math.ceil(math.log(1.0 / tail) / math.log1p(1.0 / alpha)))
-    Ka = max(8, min(Ka, max_atoms))
-    s = paths._stick_breaking_cdf(F, N, alpha, Ka, gen).t().contiguous()
+    """(N+1, F): CDF at k/N of an independent DP(α, U(0,1)) per token (exact Dirichlet
+    bin masses; tail / max_atoms are unused, kept for signature compatibility)."""
+    s = paths.dp_grid_cdf(F, N, alpha, gen).t().contiguous()
     s[0] = 0.0
     s[N] = 1.0
     return s

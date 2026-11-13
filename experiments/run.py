@@ -56,6 +56,7 @@ def main() -> None:
     ap.add_argument("--infd-n", type=int, default=0, help="infidelity samples (0 = off)")
     ap.add_argument("--infd-sigma", type=float, default=0.1)
     ap.add_argument("--infd-mode", default="delta", choices=["delta", "abs"])
+    ap.add_argument("--infd-cell", type=int, default=16, help="patch size for infidelity noise (0 = per element)")
     ap.add_argument("--save-attr", default=None,
                     help="folder to save full signed attributions (fp16) for experiments.reeval")
     ap.add_argument("--road", action="store_true", help="approximate ROAD (MoRF/LeRF)")
@@ -123,7 +124,7 @@ def main() -> None:
                     row.update(evaluate(model, x, mask, attr, bases, args.insdel_steps, prob_model,
                                         infd_n=args.infd_n, infd_sigma=args.infd_sigma,
                                         road=args.road, gen=egen, infd_base=xb,
-                                        infd_mode=args.infd_mode))
+                                        infd_mode=args.infd_mode, infd_cell=args.infd_cell))
                     if args.save_attr:
                         save_attr(args.save_attr, name, idx, spec, seed, args.baseline, attr)
                     if args.save_maps:

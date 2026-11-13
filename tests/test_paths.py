@@ -96,3 +96,27 @@ def test_guided_ig_path_reaches_input_monotonically():
     assert torch.allclose(pts[-1], x[0], atol=1e-12)
     step = (pts[1:] - pts[:-1]) * torch.sign(x - xb)
     assert float(step.min()) >= -1e-12
+
+
+@pytest.mark.parametrize("alpha", [1.0, 100.0, 1000.0, 1e5])
+def test_dp_grid_cdf_exact_moments(alpha):
+    """E F(t) = t and Var F(t) = t(1−t)/(α+1) for G ~ DP(α, U(0,1)), at every α."""
+    P, N = 40000, 8
+    F = paths.dp_grid_cdf(P, N, alpha, torch.Generator().manual_seed(0))
+    assert torch.equal(F[:, 0], torch.zeros(P, dtype=torch.float64))
+    assert torch.equal(F[:, -1], torch.ones(P, dtype=torch.float64))
+    assert float((F[:, 1:] - F[:, :-1]).min()) >= 0.0
+    t = torch.arange(N + 1, dtype=torch.float64) / N
+    var_true = t * (1 - t) / (alpha + 1)
+    k = N // 2
+    assert abs(float(F[:, k].mean()) - 0.5) < 5 * float(var_true[k].sqrt()) / P ** 0.5 + 1e-12
+    assert abs(float(F[:, k].var()) / float(var_true[k]) - 1.0) < 0.05
+
+
+def test_legacy_stick_sampler_is_wrong_at_large_alpha():
+    """documents why the stick sampler was replaced: 256 atoms make α=1000 act like α≈250."""
+    xb, x = _xy()
+    P = int(x[0].numel())
+    F = paths._stick_breaking_cdf(20000, 8, 1000.0, 256, torch.Generator().manual_seed(0))
+    var = float(F[:, 4].var())
+    assert var > 2.0 * 0.25 / 1001          # far above the true DP(1000) variance

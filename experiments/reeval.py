@@ -33,6 +33,7 @@ def main() -> None:
     ap.add_argument("--infd-n", type=int, default=0)
     ap.add_argument("--infd-sigma", type=float, default=0.1)
     ap.add_argument("--infd-mode", default="delta", choices=["delta", "abs"])
+    ap.add_argument("--infd-cell", type=int, default=16, help="patch size for infidelity noise (0 = per element)")
     ap.add_argument("--road", action="store_true")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
@@ -64,7 +65,8 @@ def main() -> None:
                 egen = torch.Generator().manual_seed(7_919 + idx)
                 row.update(evaluate(model, x, mask, attr, bases, args.insdel_steps, prob_model,
                                     infd_n=args.infd_n, infd_sigma=args.infd_sigma, road=args.road,
-                                    gen=egen, infd_base=xb, infd_mode=args.infd_mode))
+                                    gen=egen, infd_base=xb, infd_mode=args.infd_mode,
+                                    infd_cell=args.infd_cell))
             except Exception as e:  # noqa: BLE001
                 row["error"] = f"{type(e).__name__}: {e}"
             append_row(args.out, row)

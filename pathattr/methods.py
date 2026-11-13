@@ -234,9 +234,10 @@ def smooth_ig(oracle: Oracle, xb, x, gen=None, N: int = 24, sigma: float = 0.3,
 
 def spi(oracle: Oracle, xb, x, gen=None, N: int = 24, alpha: float = 10.0,
         per_channel: bool = True, est: str = "left", Q: int = 1, K: int = 1,
-        K_cv: int = 8) -> Attribution:
-    """Stick-breaking Path Integration, mean over K paths (SPI-E)."""
-    make = lambda: paths.spi(xb, x, N, alpha, per_channel, gen=gen)
+        K_cv: int = 8, sampler: str = "dirichlet") -> Attribution:
+    """Stochastic Path Integration, mean over K paths (SPI-E).
+    sampler='dirichlet' exact DP(α) bin masses; 'stick' = legacy truncated."""
+    make = lambda: paths.spi(xb, x, N, alpha, per_channel, gen=gen, sampler=sampler)
     return _ensemble(make, oracle, K, est, Q, K_cv, xb, x, gen)
 
 

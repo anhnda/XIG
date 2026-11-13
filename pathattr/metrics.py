@@ -136,7 +136,7 @@ def checker_energy(attr: torch.Tensor, mask: Optional[torch.Tensor] = None) -> f
 @torch.no_grad()
 def infidelity(model: nn.Module, x: torch.Tensor, attr: torch.Tensor, sigma: float = 0.1,
                n: int = 64, gen: Optional[torch.Generator] = None, batch_size: int = 16,
-               base: Optional[torch.Tensor] = None, mode: str = "delta") -> dict:
+               base: Optional[torch.Tensor] = None, mode: str = "delta", cell: int = 16) -> dict:
     """Gaussian-perturbation infidelity (Yeh et al., NeurIPS 2019),  v = f(x) − f(x − I).
 
     mode='delta' (default, for completeness-type attributions a_i ≈ ∫∂_i f · Δx_i):
@@ -144,6 +144,10 @@ def infidelity(model: nn.Module, x: torch.Tensor, attr: torch.Tensor, sigma: flo
         (moving feature i back by a fraction η_i of its own Δx_i costs ≈ η_i a_i)
     mode='abs' (gradient-type attributions only):
         I ~ N(0, σ²) in input units,  u = Iᵀa
+    cell > 0: η is drawn once per cell×cell patch (shared by its pixels and channels).
+        With independent per-element η the metric only sees element-level values,
+        which are Monte-Carlo noise for every stochastic method (p1: ~80% rel. error),
+        so all methods score ≈ 1; patch-level η tests the structure metrics actually use.
     infd_raw = E[(u − v)²];  infd = min_β E[(βu − v)²] / E[v²] ∈ [0, 1]  (lower is better)."""
     if mode == "delta" and base is None:
         raise ValueError("infidelity mode 'delta' needs the path baseline")
@@ -154,7 +158,14 @@ def infidelity(model: nn.Module, x: torch.Tensor, attr: torch.Tensor, sigma: flo
     done = 0
     while done < n:
         b = min(batch_size, n - done)
-        eta = torch.randn((b,) + tuple(x.shape[1:]), generator=gen, dtype=torch.float64) * sigma
+        if cell and cell > 0:
+            _, C, H, W = x.shape
+            hc, wc = -(-H // cell), -(-W // cell)
+            e = torch.randn((b, 1, hc, wc), generator=gen, dtype=torch.float64) * sigma
+            eta = e.repeat_interleave(cell, 2).repeat_interleave(cell, 3)[:, :, :H, :W].expand(b, C, H, W)
+            eta = eta.contiguous()
+        else:
+            eta = torch.randn((b,) + tuple(x.shape[1:]), generator=gen, dtype=torch.float64) * sigma
         eta_d = eta.to(device=x.device, dtype=x.dtype)
         I = eta_d * dx if mode == "delta" else eta_d
         fv = model(x - I).double().reshape(-1)
@@ -167,7 +178,7 @@ def infidelity(model: nn.Module, x: torch.Tensor, attr: torch.Tensor, sigma: flo
     beta = float((u * v).sum()) / uu if uu > 0 else 0.0
     vv = float((v * v).mean())
     infd = float(((beta * u - v) ** 2).mean()) / vv if vv > 0 else float("nan")
-    return {"infd": infd, "infd_raw": raw, "infd_beta": beta, "infd_mode": mode}
+    return {"infd": infd, "infd_raw": raw, "infd_beta": beta, "infd_mode": mode, "infd_cell": cell}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
