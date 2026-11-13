@@ -44,7 +44,7 @@ cd "$(dirname "$0")/.."
 mkdir -p "$OUT"
 IDX="$OUT/seg200.json"                      # fixed list of 200 images, created on first use
 DATA="--data seg --seg-mat $MAT --index-file $IDX --model $MODEL"
-METRICS="insdel_${BASE} insdelp_${BASE} insdel_blur overlap iou pointing infd road"
+METRICS="insdelp_${BASE} insdelp_blur insdel_${BASE} overlap iou pointing road"
 TAG="${MODEL}_${BASE}"
 
 run_test() { python -m pytest -q tests; }
@@ -96,10 +96,10 @@ run_axis() {
     --methods "spi:alpha=10,K=8,est=mid" "spi:alpha=100,K=8,est=mid" "spi:alpha=300,K=8,est=mid" \
               "spi:alpha=1000,K=8,est=mid" "spi:alpha=10000,K=8,est=mid" "spi:alpha=100000,K=8,est=mid" \
               "ig:N=24,est=mid" \
-    --infd-n 64 --infd-cell 16 --road --seeds $SEEDS \
+    --road --seeds $SEEDS \
     --save-attr "$OUT/attr_axis_${TAG}" --out "$OUT/axis_${TAG}.jsonl"
   python -m experiments.summarize "$OUT/axis_${TAG}.jsonl" --ref "ig:N=24,est=mid" \
-    --metrics insdelp_${BASE} insdelp_blur insdel_${BASE} iou overlap road infd residual \
+    --metrics insdelp_${BASE} insdelp_blur insdel_${BASE} iou overlap road residual \
     | tee "$OUT/axis_${TAG}.txt"
 }
 
@@ -143,7 +143,7 @@ run_tpa_test() {
   CH="$OUT/tpa_chosen_${TAG}_K$1.json"
   python -m experiments.tpa_sweep $DATA --start 50 --n ${NIMG:-150} --baseline "$BASE" --parts "$PARTS" \
     --alphas $ALPHAS_TPA --K $1 --N $2 --eps 1 0.1 0.01 0 --kappas 1 --seeds $SEEDS \
-    --variants-file "$CH" --eval --insdel "$BASE" blur --infd-n 64 --infd-cell 16 --road \
+    --variants-file "$CH" --eval --insdel "$BASE" blur --road \
     --out "$OUT/tpa_test_${TAG}_K$1.jsonl"
   REF=$(python -c "import json;print([v for v in json.load(open('$CH')) if v.endswith('|uniform')][0])")
   python -m experiments.summarize "$OUT/tpa_test_${TAG}_K$1.jsonl" --ref "$REF" \
@@ -156,12 +156,12 @@ run_agree() {
     | tee "$OUT/agree_p2_${TAG}.txt"
   if [ -f "$OUT/axis_${TAG}.jsonl" ]; then
     python -m experiments.metric_agreement "$OUT/axis_${TAG}.jsonl" \
-      --metrics insdelp_${BASE} insdelp_blur iou overlap infd road | tee "$OUT/agree_axis_${TAG}.txt"
+      --metrics insdelp_${BASE} insdelp_blur iou overlap road | tee "$OUT/agree_axis_${TAG}.txt"
   fi
   set -- $KN
   if [ -f "$OUT/tpa_test_${TAG}_K$1.jsonl" ]; then
     python -m experiments.metric_agreement "$OUT/tpa_test_${TAG}_K$1.jsonl" \
-      --metrics hold_rel tr_rel insdelp_${BASE} iou infd road | tee "$OUT/agree_tpa_${TAG}.txt"
+      --metrics hold_rel tr_rel insdelp_${BASE} iou road | tee "$OUT/agree_tpa_${TAG}.txt"
   fi
 }
 
