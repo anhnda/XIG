@@ -54,12 +54,15 @@ def third_derivatives(F: Callable, z: torch.Tensor) -> torch.Tensor:
 def spi_correction(F: Callable, d: int, alpha: float, n_t: int = 64) -> torch.Tensor:
     """C_i of the first-order expansion (see module docstring)."""
     t, w = gauss_legendre(n_t)
+    d3 = vmap(jacfwd(jacrev(grad(F))))
+    step = max(1, 4_000_000 // d ** 3)              # bound the (nodes, d, d, d) tensor
     C = torch.zeros(d, dtype=DT)
-    for tk, wk in zip(t, w):
-        T = third_derivatives(F, tk * torch.ones(d, dtype=DT))
-        t_ijj = torch.einsum("ijj->ij", T)          # ∂_i ∂_j² F
-        t_jii = torch.einsum("jii->ij", T)          # ∂_j ∂_i² F   (indexed [i, j])
-        C = C + wk * tk * (1 - tk) * (t_ijj - t_jii).sum(dim=1)
+    for k0 in range(0, n_t, step):
+        tk, wk = t[k0:k0 + step], w[k0:k0 + step]
+        T = d3(tk[:, None] * torch.ones(1, d, dtype=DT))  # (k, d, d, d)
+        t_ijj = torch.einsum("kijj->kij", T)        # ∂_i ∂_j² F
+        t_jii = torch.einsum("kjii->kij", T)        # ∂_j ∂_i² F   (indexed [i, j])
+        C = C + ((wk * tk * (1 - tk))[:, None] * (t_ijj - t_jii).sum(dim=2)).sum(dim=0)
     return C / (2.0 * (alpha + 1.0))
 
 
@@ -76,7 +79,7 @@ def _polygon_integral(gF: Callable, S: torch.Tensor, u: torch.Tensor, wq: torch.
 
 
 def spi_monte_carlo(F: Callable, d: int, alpha: float, n_paths: int = 20000, N: int = 128,
-                    Q: int = 8, gen: Optional[torch.Generator] = None, chunk: int = 512,
+                    Q: int = 8, gen: Optional[torch.Generator] = None, chunk: int = 0,
                     antithetic: bool = True) -> dict:
     """E_{DP(α)} [∫ ∇F · ds] by Monte Carlo over paths, each integrated with Q Gauss–Legendre
     nodes per segment of an N-bin polygon (exact DP bin masses). Antithetic pairs use
@@ -84,6 +87,8 @@ def spi_monte_carlo(F: Callable, d: int, alpha: float, n_paths: int = 20000, N: 
     Returns mean (d,), standard error (d,), and the completeness residual of the mean."""
     u, wq = gauss_legendre(Q)
     gF = vmap(grad(F))
+    if chunk <= 0:                                   # ≈ 2.6M evaluation coordinates per call
+        chunk = max(8, (512 * 128 * 8 * 5) // (N * Q * d))
     outs = []
     done = 0
     while done < n_paths:
@@ -105,22 +110,43 @@ def spi_monte_carlo(F: Callable, d: int, alpha: float, n_paths: int = 20000, N: 
 # toy functions
 # ─────────────────────────────────────────────────────────────────────────────
 
-def toy_mlp(d: int = 5, width: int = 16, seed: int = 0, scale: float = 1.5) -> Callable:
-    """Generic smooth interactions: F(z) = v · tanh(W z + c)."""
+def toy_mlp(d: int = 5, width: int = 16, seed: int = 0, scale: float = 1.5,
+            normalized: bool = False) -> Callable:
+    """Generic smooth interactions: F(z) = v · tanh(W z + c).
+    normalized=True scales W by 1/√d, so the pre-activations (and the path noise they
+    receive, Σ_j W_kj² v) stay O(1) as d grows; without it they grow like √d."""
     g = torch.Generator().manual_seed(seed)
     W = torch.randn(width, d, generator=g, dtype=DT) * scale
+    if normalized:
+        W = W / math.sqrt(d)
     c = torch.randn(width, generator=g, dtype=DT) * 0.5
     v = torch.randn(width, generator=g, dtype=DT)
     return lambda z: (v * torch.tanh(W @ z + c)).sum()
 
 
-def toy_saturating(d: int = 5, seed: int = 0, sharp: float = 8.0, offset: float = 1.0) -> Callable:
-    """Single-index model that saturates early on the diagonal (like ResNet's logit):
-    F(z) = 4 σ(sharp · w·z − offset), w > 0."""
+def _pos_weights(d: int, g: torch.Generator, spread: float) -> torch.Tensor:
+    w = torch.exp(spread * torch.randn(d, generator=g, dtype=DT))
+    return w / w.sum()
+
+
+def toy_saturating(d: int = 5, seed: int = 0, sharp: float = 8.0, offset: float = 1.0,
+                   spread: float = 1.0) -> Callable:
+    """Single-index model that saturates early on the diagonal: F(z) = 4 σ(sharp · w·z − offset),
+    w > 0 log-normal with the given spread. For F = g(w·z) the SPI bracket is
+    T_ij = g‴ w_i w_j (w_j − w_i): zero for equal weights, so the spread must be > 0."""
     g = torch.Generator().manual_seed(seed)
-    w = torch.rand(d, generator=g, dtype=DT) + 0.2
-    w = w / w.sum()
+    w = _pos_weights(d, g, spread)
     return lambda z: 4.0 * torch.sigmoid(sharp * (w @ z) - offset)
+
+
+def toy_sat_interact(d: int = 5, seed: int = 0, sharp: float = 6.0, offset: float = 1.0,
+                     gamma: float = 1.0) -> Callable:
+    """Saturation + pairwise interactions: F(z) = 4 σ(sharp · (w·z + γ zᵀBz / d) − offset)."""
+    g = torch.Generator().manual_seed(seed)
+    w = _pos_weights(d, g, 1.0)
+    B = torch.randn(d, d, generator=g, dtype=DT)
+    B = (B + B.t()) / 2
+    return lambda z: 4.0 * torch.sigmoid(sharp * (w @ z + gamma * (z @ (B @ z)) / d) - offset)
 
 
 def toy_multilinear(d: int = 5, seed: int = 0) -> Callable:
@@ -138,3 +164,39 @@ def toy_multilinear(d: int = 5, seed: int = 0) -> Callable:
             out = out + c * torch.prod(z[idx])
         return out
     return F
+
+
+TOYS = {
+    "mlp": lambda d, s: toy_mlp(d, seed=s),
+    "mlpn": lambda d, s: toy_mlp(d, seed=s, normalized=True),
+    "saturating": lambda d, s: toy_saturating(d, seed=s),
+    "satint": lambda d, s: toy_sat_interact(d, seed=s),
+    "multilinear": lambda d, s: toy_multilinear(d, seed=s),
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# exact Shapley of the vertex game v(S) = F(1_S) − F(0)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def shapley_exact(F: Callable, d: int, chunk: int = 1 << 16) -> torch.Tensor:
+    """φ_i = Σ_{S ∌ i} |S|!(d−|S|−1)!/d! · (v(S ∪ i) − v(S)), all 2^d vertices (d ≤ 20)."""
+    if d > 20:
+        raise ValueError("shapley_exact enumerates 2^d vertices; d ≤ 20")
+    n = 1 << d
+    ids = torch.arange(n)
+    bits = torch.arange(d)
+    vals = []
+    fF = vmap(F)
+    for i0 in range(0, n, chunk):
+        Z = ((ids[i0:i0 + chunk, None] >> bits) & 1).to(DT)
+        vals.append(fF(Z))
+    v = torch.cat(vals)
+    size = ((ids[:, None] >> bits) & 1).sum(dim=1)
+    w = torch.tensor([math.factorial(s) * math.factorial(d - s - 1) / math.factorial(d)
+                      for s in range(d)], dtype=DT)
+    phi = torch.zeros(d, dtype=DT)
+    for i in range(d):
+        S = ids[((ids >> i) & 1) == 0]
+        phi[i] = (w[size[S]] * (v[S | (1 << i)] - v[S])).sum()
+    return phi

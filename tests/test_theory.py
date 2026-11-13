@@ -51,6 +51,33 @@ def test_polygon_integral_straight_equals_ig_and_complete():
     assert res[8] < 1e-5 and res[16] < 1e-8 and res[16] < res[8] / 100
 
 
+def test_shapley_exact_matches_permutations_and_multilinear_ig():
+    import itertools
+    F = TH.toy_mlp(4)
+    phi = torch.zeros(4, dtype=TH.DT)
+    perms = list(itertools.permutations(range(4)))
+    for p in perms:
+        z = torch.zeros(4, dtype=TH.DT)
+        prev = float(F(z))
+        for i in p:
+            z[i] = 1.0
+            cur = float(F(z))
+            phi[i] += cur - prev
+            prev = cur
+    assert torch.allclose(TH.shapley_exact(F, 4), phi / len(perms), atol=1e-12)
+    G = TH.toy_multilinear(6)
+    assert torch.allclose(TH.shapley_exact(G, 6), TH.ig_exact(G, 6), atol=1e-10)
+
+
+def test_ridge_correction_needs_unequal_weights():
+    # F = g(w·z): T_ij = g''' w_i w_j (w_j − w_i) → C = 0 for equal weights
+    assert float(TH.spi_correction(TH.toy_saturating(5, spread=0.0), 5, 10.0).abs().max()) < 1e-12
+    assert float(TH.spi_correction(TH.toy_saturating(5, spread=1.0), 5, 10.0).abs().max()) > 1e-6
+    for name, mk in TH.TOYS.items():
+        C = TH.spi_correction(mk(6, 1), 6, 3.0)
+        assert abs(float(C.sum())) < 1e-10, name
+
+
 def test_third_derivative_symmetric():
     F = TH.toy_mlp()
     T = TH.third_derivatives(F, 0.3 * torch.ones(5, dtype=TH.DT))

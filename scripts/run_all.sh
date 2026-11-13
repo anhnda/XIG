@@ -21,6 +21,8 @@
 #   all         everything above in order
 # analysis stages (not in 'all'):
 #   theory      CPU toy check of SPI = IG + C/(α+1) + O(1/α²)   (NPATH paths per α, default 20000)
+#   theory_sweep  deterministic: cos(correction, Shapley − IG) over NSEED random toys (default 200)
+#   theory_d    same check as 'theory' for d = 5, 20, 80 (does the expansion degrade with d?)
 #   analyze     why SPI ranks high: f along line / SPI paths + saved axis attributions (after axis)
 # Notes: SPI uses the exact Dirichlet sampler (the old stick sampler capped atoms at 256, so
 # α ≥ 100 in p2 is not the stated α — the 'axis' stage replaces those rows).
@@ -32,7 +34,7 @@
 set -euo pipefail
 
 MAT=${1:?usage: run_all.sh /path/to/gtsegs_ijcv.mat <stage> [out_dir]}
-STAGE=${2:?stage: test|calib|p1|p2|infd|axis|tpa_calib|tpa_select|alpha|tpa_test|sigma|agree|nlp|all|theory|analyze}
+STAGE=${2:?stage: test|calib|p1|p2|infd|axis|tpa_calib|tpa_select|alpha|tpa_test|sigma|agree|nlp|all|theory|theory_sweep|theory_d|analyze}
 OUT=${3:-runs}
 BASE=${BASE:-black}
 MODEL=${MODEL:-resnet50}
@@ -169,9 +171,21 @@ run_agree() {
 }
 
 run_theory() {
-  # CPU only, no data needed: SPI = IG + C/(α+1) + O(1/α²) on toy functions
-  python -m experiments.verify_spi_expansion --alphas 3 10 30 100 300 --n ${NPATH:-20000} \
-    | tee "$OUT/theory_spi_expansion.txt"
+  # CPU only, no data needed: SPI = IG + C/(α+1) + O(1/α²) on toy functions (d = 5)
+  python -m experiments.verify_spi_expansion --toys mlp saturating satint multilinear --ds 5 \
+    --alphas 3 10 30 100 300 --n ${NPATH:-20000} | tee "$OUT/theory_spi_expansion.txt"
+}
+
+run_theory_sweep() {
+  # deterministic: does the large-α correction point towards Shapley? (NSEED toys per family × d)
+  python -m experiments.sweep_spi_theory --families mlp mlpn saturating satint --ds 5 10 15 \
+    --seeds ${NSEED:-200} --out "$OUT/theory_sweep.jsonl" | tee "$OUT/theory_sweep.txt"
+}
+
+run_theory_d() {
+  # does the expansion degrade with d? mlpn: pre-activation noise O(1); mlp: grows like √d
+  python -m experiments.verify_spi_expansion --toys mlpn mlp --ds 5 20 80 \
+    --alphas 10 30 100 --small-alphas --n ${NPATH:-20000} | tee "$OUT/theory_d.txt"
 }
 
 run_analyze() {
@@ -211,6 +225,8 @@ case "$STAGE" in
   agree)      run_agree ;;
   nlp)        run_nlp ;;
   theory)     run_theory ;;
+  theory_sweep) run_theory_sweep ;;
+  theory_d)   run_theory_d ;;
   analyze)    run_analyze ;;
   all)       run_test; run_calib; run_p1; run_p2; run_infd; run_axis; run_tpa_calib; run_tpa_select
               run_alpha; run_tpa_test; run_sigma; run_agree; run_nlp ;;
