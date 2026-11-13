@@ -86,6 +86,8 @@ def main() -> None:
     print(f"[run] {len(indices)} images, {len(args.methods)} methods, device={dev}")
 
     specs = [(s, *resolve(s)) for s in args.methods]
+    from pathattr.masks import check_specs
+    check_specs(args.methods)
     done = load_done(args.out)
     if args.save_maps:
         os.makedirs(args.save_maps, exist_ok=True)

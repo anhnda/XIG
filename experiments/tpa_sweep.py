@@ -96,6 +96,7 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
+    MK.check_specs([args.parts, args.transfer_parts])
     grid = variant_grid(args.alphas, args.modes, args.eps, args.kappas)
     if args.variants_file:
         with open(args.variants_file) as fh:

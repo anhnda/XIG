@@ -48,6 +48,17 @@ def to_uint8(x: torch.Tensor) -> np.ndarray:
     return (img.permute(1, 2, 0).numpy() * 255.0 + 0.5).astype(np.uint8)
 
 
+def check_specs(texts) -> None:
+    """Fail fast (before any image is processed) if a SLIC partition is requested
+    but scikit-image is missing. `texts`: method specs or partition strings."""
+    if any("slic" in str(t) for t in texts):
+        try:
+            from skimage.segmentation import slic  # noqa: F401
+        except ImportError as e:
+            raise SystemExit("SLIC partitions need scikit-image:  pip install scikit-image   "
+                             "(or use parts=grid:28)") from e
+
+
 def partition(x: torch.Tensor, spec: str) -> torch.Tensor:
     """Label map (H, W) long on x.device, contiguous labels."""
     _, _, H, W = x.shape
