@@ -11,7 +11,7 @@
 #               ins/del, localisation, infidelity, approximate ROAD; attributions saved
 #   infd        re-evaluate p2's saved attributions: infidelity per 16 px cell, σ = 0.3 and 1.0
 #   axis        SPI α axis with the EXACT Dirichlet sampler: α = 10 … 1e5 vs IG (α = ∞)
-#   tpa_calib   TPA sweep on images 0–49 for each budget split (K, N) ∈ {8·24, 16·12, 32·6}
+#   tpa_calib   TPA sweep on images 0–49 for each budget split (K, N) ∈ {8·24, 16·12, 32·6}, α ∈ {10, 30, 100}
 #   tpa_select  choose α / ε per family and per (K, N) by held-out fidelity
 #   alpha       E1: within-α spread vs debiased between-α gap (run with MODEL=vit_b_16, swin_b too)
 #   tpa_test    chosen variants on images 50–199, all metrics   (KN="8 24" picks the split)
@@ -38,7 +38,7 @@ PARTS=${PARTS:-"slic:64"}
 MODEL_NLP=${MODEL_NLP:-"textattack/bert-base-uncased-SST-2"}
 KN=${KN:-"8 24"}
 KNS=("8 24" "16 12" "32 6")
-ALPHAS_TPA="10 100 1000"
+ALPHAS_TPA="10 30 100"
 
 cd "$(dirname "$0")/.."
 mkdir -p "$OUT"
@@ -126,7 +126,7 @@ run_alpha() {
 run_tpa_calib() {
   for kn in "${KNS[@]}"; do set -- $kn
     python -m experiments.tpa_sweep $DATA --start 0 --n ${NIMG:-50} --baseline "$BASE" --parts "$PARTS" \
-      --alphas $ALPHAS_TPA --K $1 --N $2 --eps 1 0.1 0.01 0 --kappas 1 --seeds 0 \
+      --alphas $ALPHAS_TPA --K $1 --N $2 --eps 1 0.1 0.01 0 --kappas 1 0.1 0.01 --seeds 0 \
       --out "$OUT/tpa_calib_${TAG}_K$1.jsonl"
   done
 }
@@ -142,7 +142,7 @@ run_tpa_test() {
   set -- $KN
   CH="$OUT/tpa_chosen_${TAG}_K$1.json"
   python -m experiments.tpa_sweep $DATA --start 50 --n ${NIMG:-150} --baseline "$BASE" --parts "$PARTS" \
-    --alphas $ALPHAS_TPA --K $1 --N $2 --eps 1 0.1 0.01 0 --kappas 1 --seeds $SEEDS \
+    --alphas $ALPHAS_TPA --K $1 --N $2 --eps 1 0.1 0.01 0 --kappas 1 0.1 0.01 --seeds $SEEDS \
     --variants-file "$CH" --eval --insdel "$BASE" blur --road \
     --out "$OUT/tpa_test_${TAG}_K$1.jsonl"
   REF=$(python -c "import json;print([v for v in json.load(open('$CH')) if v.endswith('|uniform')][0])")
