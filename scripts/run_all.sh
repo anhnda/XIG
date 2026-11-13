@@ -19,6 +19,9 @@
 #   agree       E5: Kendall τ between metric rankings (p2, axis, tpa_test)
 #   nlp         E7 on SST-2 (needs transformers + datasets; MODEL_NLP to change the model)
 #   all         everything above in order
+# analysis stages (not in 'all'):
+#   theory      CPU toy check of SPI = IG + C/(α+1) + O(1/α²)   (NPATH paths per α, default 20000)
+#   analyze     why SPI ranks high: f along line / SPI paths + saved axis attributions (after axis)
 # Notes: SPI uses the exact Dirichlet sampler (the old stick sampler capped atoms at 256, so
 # α ≥ 100 in p2 is not the stated α — the 'axis' stage replaces those rows).
 #
@@ -29,7 +32,7 @@
 set -euo pipefail
 
 MAT=${1:?usage: run_all.sh /path/to/gtsegs_ijcv.mat <stage> [out_dir]}
-STAGE=${2:?stage: test|calib|p1|p2|infd|axis|tpa_calib|tpa_select|alpha|tpa_test|sigma|agree|nlp|all}
+STAGE=${2:?stage: test|calib|p1|p2|infd|axis|tpa_calib|tpa_select|alpha|tpa_test|sigma|agree|nlp|all|theory|analyze}
 OUT=${3:-runs}
 BASE=${BASE:-black}
 MODEL=${MODEL:-resnet50}
@@ -165,6 +168,21 @@ run_agree() {
   fi
 }
 
+run_theory() {
+  # CPU only, no data needed: SPI = IG + C/(α+1) + O(1/α²) on toy functions
+  python -m experiments.verify_spi_expansion --alphas 3 10 30 100 300 --n ${NPATH:-20000} \
+    | tee "$OUT/theory_spi_expansion.txt"
+}
+
+run_analyze() {
+  # forward-only profiles of f along line / SPI paths + saved axis attributions (needs stage axis)
+  python -m experiments.analyze_spi $DATA --n ${NIMG:-200} --baseline "$BASE" \
+    --attr-dir "$OUT/attr_axis_${TAG}" --axis "$OUT/axis_${TAG}.jsonl" \
+    --prof-alphas 0.1 1 10 100 1000 --prof-K 4 --adv-alpha 100 \
+    --metrics insdelp_${BASE} insdelp_blur insdel_${BASE} iou overlap road \
+    --out "$OUT/analyze_${TAG}.jsonl" | tee "$OUT/analyze_${TAG}.txt"
+}
+
 run_nlp() {
   M_TAG=$(echo "$MODEL_NLP" | tr '/' '_')
   python -m experiments.nlp.run_nlp --dataset sst2 --model "$MODEL_NLP" --n ${NIMG:-872} --max-len 128 \
@@ -192,7 +210,9 @@ case "$STAGE" in
   sigma)      run_sigma ;;
   agree)      run_agree ;;
   nlp)        run_nlp ;;
-  all)        run_test; run_calib; run_p1; run_p2; run_infd; run_axis; run_tpa_calib; run_tpa_select
+  theory)     run_theory ;;
+  analyze)    run_analyze ;;
+  all)       run_test; run_calib; run_p1; run_p2; run_infd; run_axis; run_tpa_calib; run_tpa_select
               run_alpha; run_tpa_test; run_sigma; run_agree; run_nlp ;;
   *)          echo "unknown stage '$STAGE'"; exit 1 ;;
 esac

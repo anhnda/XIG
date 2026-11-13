@@ -4,4 +4,4 @@ MESSAGE="${1:-Update}"
 
 git add .
 git commit -m "$MESSAGE"
-git push origin xp
+git push origin chk
