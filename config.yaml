@@ -165,7 +165,7 @@ pet:
 # ─────────────────────────────────────────────────────────────────────────────
 local:
   out: runs
-  imagenet_mat: /path/to/gtsegs_ijcv.mat
+  imagenet_mat: gtsegs_ijcv.mat
   old_index_file: null       # runs/seg200.json của code cũ (null → tái tạo)
   old_jsonl: null            # vd runs/axis_resnet50_black.jsonl của code cũ (cho power)
   pet_root: data/pet
