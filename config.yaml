@@ -166,7 +166,7 @@ pet:
 local:
   out: runs
   imagenet_mat: gtsegs_ijcv.mat
-  old_index_file: null       # runs/seg200.json của code cũ (null → tái tạo)
-  old_jsonl: null            # vd runs/axis_resnet50_black.jsonl của code cũ (cho power)
+  old_index_file: runs/seg200.json       # runs/seg200.json của code cũ (null → tái tạo)
+  old_jsonl: runs/axis_resnet50_black.jsonl            # vd runs/axis_resnet50_black.jsonl của code cũ (cho power)
   pet_root: data/pet
-  device: null               # null → cuda nếu có
+  device: cuda               # null → cuda nếu có
