@@ -51,6 +51,21 @@ def test_dirichlet_small_shape_finite():
     assert torch.allclose(d.sum(0), torch.ones_like(d[0]), atol=1e-12)
 
 
+@pytest.mark.parametrize("N", [1, 2, 7, 10, 192])
+def test_cum_nodes(N):
+    d = SPIDP(1.0, N).increments(3, (500,), generator(2))
+    Z = SPIDP.cum_nodes(d)
+    assert Z.shape[0] == N + 1
+    assert torch.all(Z[0] == 0) and torch.all(Z[-1] == 1)
+    assert torch.all(Z[1:] >= Z[:-1])
+    plain = torch.cat([torch.zeros_like(d[:1]), torch.cumsum(d, 0)])
+    assert torch.allclose(Z, plain, atol=1e-13)
+    # nửa trên: phần bù 1 − Z_k khớp Σ_{j>k} δ_j với độ chính xác tương đối (đây là chỗ cumsum xuôi hỏng)
+    for k in range(N // 2 + 1, N):
+        tail = d[k:].sum(0)
+        assert torch.allclose(1.0 - Z[k], tail, rtol=1e-6, atol=2.3e-16)
+
+
 def test_integrate_path_mapping():
     """Nhiều đường trong một lần rút phải cho đúng kết quả từng đường (index_add theo r % P)."""
     smp = IGShift(7)

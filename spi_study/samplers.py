@@ -162,19 +162,31 @@ class SPIDP(Sampler):
         logv = torch.log(_rand(size, gen).clamp_min(1e-300))
         return torch.softmax(logg + logv / a, dim=0)            # (N, P, *shape), float64
 
+    @staticmethod
+    def cum_nodes(delta: torch.Tensor) -> torch.Tensor:
+        """Z tại các nút k = 0…N từ số gia δ (N, …).
+
+        Nửa dưới: cộng dồn xuôi (Z nhỏ giữ độ chính xác tương đối). Nửa trên: Z_k = 1 − Σ_{j>k} δ_j
+        (cộng dồn ngược). Cộng dồn xuôi tới gần 1 làm sai số tuyệt đối ~1e-16 lấn át phần bù 1 − Z,
+        trong khi với α nhỏ phần bù đó thường nhỏ hơn 1e-16 (ví dụ Beta(0.9, 0.1) tại t = 0.9).
+        cummax giữ tính đơn điệu ở chỗ nối."""
+        N = delta.shape[0]
+        m = N // 2
+        zero = torch.zeros_like(delta[:1])
+        fwd = torch.cumsum(delta[:m], dim=0)                                    # Z_1 … Z_m
+        tail = torch.flip(torch.cumsum(torch.flip(delta[m + 1:], [0]), dim=0), [0])  # Σ_{j>k}, k = m+1 … N−1
+        Z = torch.cat([zero, fwd, 1.0 - tail, zero + 1.0], dim=0).clamp_(0.0, 1.0)
+        return torch.cummax(Z, dim=0).values
+
     def draw(self, P, shape, gen, dtype=torch.float32):
         delta = self.increments(P, shape, gen)
-        csum = torch.cumsum(delta, dim=0).clamp_(max=1.0)
-        z_prev = torch.cat([torch.zeros_like(delta[:1]), csum[:-1]], dim=0)
+        z_prev = self.cum_nodes(delta)[:-1]
         s = _node_offsets(self.node, self.N, P, shape, gen)
         Z = z_prev + s * delta
         return Z.to(dtype), delta.to(dtype)
 
     def nodes(self, P, shape, gen):
-        delta = self.increments(P, shape, gen)
-        Z = torch.cat([torch.zeros_like(delta[:1]), torch.cumsum(delta, dim=0)], dim=0).clamp_(0.0, 1.0)
-        Z[-1] = 1.0
-        return Z
+        return self.cum_nodes(self.increments(P, shape, gen))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
