@@ -182,15 +182,58 @@ def _next_level(cfg: dict, task: dict, levs: list, n_ext: int):
     raise SystemExit(f"extend không hợp lệ: {rule}")
 
 
+def level_var(subs: list[torch.Tensor]) -> torch.Tensor:
+    """Phương sai Monte Carlo theo phần tử của trung bình các sub-estimate: s²/n_sub (float64)."""
+    S = torch.stack([s.double() for s in subs])
+    return S.var(dim=0, unbiased=True) / S.shape[0]
+
+
+def debiased_sq(diff_sq: torch.Tensor, var: torch.Tensor, block: int) -> tuple[float, float]:
+    """Σ(diff² − var) và sai số chuẩn của nó theo khối block×block (khối coi như độc lập).
+    diff_sq, var: (C, H, W)."""
+    e = (diff_sq - var).sum(dim=0)                                   # (H, W)
+    H, W = e.shape
+    hb, wb = H // block, W // block
+    blocks = e[:hb * block, :wb * block].reshape(hb, block, wb, block).sum(dim=(1, 3)).flatten()
+    est = float(e.sum())
+    se = float(blocks.std(unbiased=True)) * float(blocks.numel()) ** 0.5 if blocks.numel() > 1 else float("nan")
+    return est, se
+
+
+def rel_change(At, subs_t, Ap, subs_p, block: int) -> tuple[float, float, float, float]:
+    """-> (rel L2 thô, rel L2 khử nhiễu, cận trên (ước lượng + 2·SE), nhiễu của A_top tương đối).
+
+    E‖Ā_top − Ā_prev‖² = ‖bias_top − bias_prev‖² + V_top + V_prev (hai mức độc lập), nên
+    ‖Ā_top − Ā_prev‖² − V_top − V_prev ước lượng không chệch phần thay đổi có hệ thống giữa hai mức."""
+    At, Ap = At.double(), Ap.double()
+    n = float(At.norm().clamp_min(1e-30))
+    d2 = (At - Ap).pow(2)
+    raw = float(d2.sum()) ** 0.5 / n
+    if len(subs_t) < 2 or len(subs_p) < 2:
+        return raw, raw, raw, 0.0
+    vt, vp = level_var(subs_t), level_var(subs_p)
+    est, se = debiased_sq(d2, vt + vp, block)
+    deb = max(0.0, est) ** 0.5 / n
+    hi = max(0.0, est + 2 * se) ** 0.5 / n
+    return raw, deb, hi, float(vt.sum()) ** 0.5 / n
+
+
 def run_converge(st: Setting, group: str, extend: bool = False) -> int:
     cfg, store = st.cfg, st.store
     cc = cfg["convergence"]
+    mode = cc.get("mode", "raw")
+    block = int(cc.get("block", 28))
     images = st.image_ids()
+    crit = ("‖Ā_top − Ā_prev‖/‖Ā_top‖ khử nhiễu (trừ V_top + V_prev từ sub-estimate)" if mode == "debiased"
+            else "‖A_top − A_prev‖/‖A_top‖ thô")
     lines = [f"# Hội tụ — {group} — {st.tag}\n",
-             f"Tiêu chí: trung vị ‖A_top − A_prev‖/‖A_top‖ ≤ {cc['rel_l2']}, trung bình |ΔIoU| ≤ {cc['iou']}. "
+             f"Tiêu chí ({mode}): trung vị {crit} ≤ {cc['rel_l2']}, trung bình |ΔIoU| ≤ {cc['iou']}. "
              f"{len(images)} ảnh.\n",
-             "| spec | mức (K×N) top / prev | trung vị rel L2 | trung bình abs ΔIoU | trạng thái |",
-             "|---|---|---|---|---|"]
+             "Cột 'cận trên' = trung vị của √(ước lượng + 2·SE)/‖Ā_top‖ (SE theo khối "
+             f"{block}×{block}); 'nhiễu top' = √V_top/‖Ā_top‖. Chỉ để đọc, không dùng quyết định.\n",
+             "| spec | mức (K×N) top / prev | rel L2 thô | rel L2 khử nhiễu | cận trên | nhiễu top | "
+             "abs ΔIoU | trạng thái |",
+             "|---|---|---|---|---|---|---|---|"]
     result, extended = {}, False
     seed = cfg["seed"]
     masks = {im: store.load_mask(im) for im in images if store.has_meta(im)}
@@ -205,18 +248,22 @@ def run_converge(st: Setting, group: str, extend: bool = False) -> int:
         if len(done) < len(levs) or len(done) < 2:
             status = "chưa đủ mức (chạy attr)"
             result[spec] = {"status": "incomplete", "levels": levs, "complete": done}
-            lines.append(f"| {spec} | – | – | – | {status} |")
+            lines.append(f"| {spec} | – | – | – | – | – | – | {status} |")
             continue
         top, prev = done[-1], done[-2]
-        rel, diou = [], []
+        raw, deb, hi, noise, diou = [], [], [], [], []
         for im in images:
-            At, _ = store.load_level(im, spec, top, B)
-            Ap, _ = store.load_level(im, spec, prev, B)
-            rel.append(float((At - Ap).double().norm() / At.double().norm().clamp_min(1e-30)))
+            At, st_ = store.load_level(im, spec, top, B)
+            Ap, sp_ = store.load_level(im, spec, prev, B)
+            r, d, u, z = rel_change(At, st_, Ap, sp_, block)
+            raw.append(r); deb.append(d); hi.append(u); noise.append(z)
             mask, valid = masks[im]
             perm = tie_perm(im, mask.numel(), seed)
             diou.append(abs(iou_topk(At, mask, perm, valid) - iou_topk(Ap, mask, perm, valid)))
-        med_rel, mean_diou = float(np.median(rel)), float(np.nanmean(diou))
+        med_raw, med_deb = float(np.median(raw)), float(np.median(deb))
+        med_hi, med_noise = float(np.median(hi)), float(np.median(noise))
+        mean_diou = float(np.nanmean(diou))
+        med_rel = med_deb if mode == "debiased" else med_raw
         ok = med_rel <= cc["rel_l2"] and mean_diou <= cc["iou"]
         status = "HỘI TỤ" if ok else "chưa hội tụ"
         if not ok:
@@ -230,11 +277,14 @@ def run_converge(st: Setting, group: str, extend: bool = False) -> int:
                     status += " (hết quy tắc mở rộng)"
             elif n_ext >= int(cc["max_extra_levels"]):
                 status += " (đã dùng hết số mức mở rộng: báo cáo kèm cờ)"
-        result[spec] = {"status": "converged" if ok else "not_converged", "top": top, "prev": prev,
+        result[spec] = {"status": "converged" if ok else "not_converged", "mode": mode, "top": top, "prev": prev,
                         "top_KN": levs[top], "prev_KN": levs[prev], "median_rel_l2": med_rel,
-                        "mean_abs_diou": mean_diou, "rel_l2_per_image": rel, "n_extensions": n_ext}
+                        "median_rel_l2_raw": med_raw, "median_rel_l2_debiased": med_deb,
+                        "median_rel_l2_upper": med_hi, "median_noise_top": med_noise,
+                        "mean_abs_diou": mean_diou, "rel_l2_raw_per_image": raw,
+                        "rel_l2_debiased_per_image": deb, "n_extensions": n_ext}
         lines.append(f"| {spec} | {levs[top][0]}×{levs[top][1]} / {levs[prev][0]}×{levs[prev][1]} | "
-                     f"{med_rel:.4f} | {mean_diou:.4f} | {status} |")
+                     f"{med_raw:.4f} | {med_deb:.4f} | {med_hi:.4f} | {med_noise:.4f} | {mean_diou:.4f} | {status} |")
     text = "\n".join(lines) + "\n"
     path = store.write_report(f"convergence_{group}", text, result)
     print(text)

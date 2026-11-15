@@ -7,7 +7,9 @@ Ba họ cùng E Z(t) = t và Var Z(t) = h·t(1−t), h = 1/(α+1):
     line  line:s=2h      (A_s = (1−s)·A_IG + s·A_SPI(1), từ tham chiếu)
 
 Chỉ số thu gọn cho cặp (f, g): CI_fg(h) = ‖A_f − A_g‖₂ / ‖A_beta − A_IG‖₂, trung vị qua ảnh;
-kèm ‖A_f − A_g‖₂ / ‖A_IG‖₂. Chất lượng Q = IoU của tham chiếu. SE của ΔQ = SE ghép cặp qua ảnh
+kèm ‖A_f − A_g‖₂ / ‖A_IG‖₂. Với collapse.debias: true, mọi ‖·‖² được khử nhiễu Monte Carlo
+(trừ phương sai theo phần tử ước lượng từ sub-estimate), vì nhiễu theo phần tử của SPI ở 64 đường
+cỡ 20–40% ‖A‖ và lấn át khác biệt thật giữa các họ. Chất lượng Q = IoU của tham chiếu. SE của ΔQ = SE ghép cặp qua ảnh
 (sd/√n) — protocol không nói rõ SE nào; đây là lựa chọn của bộ code.
 
 Tiêu chí (xét tại collapse.eval_alphas):
@@ -26,7 +28,7 @@ import numpy as np
 import torch
 
 from .config import beta_spec, canon, line_spec, mix_spec, num, parse_spec
-from .reference import n_sub_of, top_level
+from .reference import debiased_sq, level_var, n_sub_of, top_level
 from .samplers import make_sampler, s_eps
 from .seeding import generator, seed_of
 from .setting import Setting
@@ -45,15 +47,27 @@ class RefCache:
             self.top[spec] = top_level(self.cfg, self.st, spec)
         return self.top[spec]
 
-    def load(self, image, spec) -> torch.Tensor:
+    def load(self, image, spec) -> tuple[torch.Tensor, torch.Tensor]:
+        """-> (tham chiếu, phương sai Monte Carlo theo phần tử của nó), float64."""
         name, p = parse_spec(spec)
         if name == "line":
             s = num(p["s"])
             ig = canon(self.cfg["gate1"]["ig_ref"])
             a1 = beta_spec(self.cfg["collapse"]["alpha_line"])
-            return ((1 - s) * self.load(image, ig).double() + s * self.load(image, a1).double()).float()
-        A, _ = self.st.store.load_level(image, spec, self.level(spec), n_sub_of(self.cfg, spec))
-        return A
+            Ai, Vi = self.load(image, ig)
+            A1, V1 = self.load(image, a1)
+            return (1 - s) * Ai + s * A1, (1 - s) ** 2 * Vi + s ** 2 * V1
+        A, subs = self.st.store.load_level(image, spec, self.level(spec), n_sub_of(self.cfg, spec))
+        V = level_var(subs) if len(subs) > 1 else torch.zeros_like(A, dtype=torch.float64)
+        return A.double(), V
+
+
+def _sq(A, VA, B, VB, debias: bool, block: int) -> tuple[float, float]:
+    """‖A − B‖² (khử nhiễu: trừ V_A + V_B) và SE của nó."""
+    d2 = (A - B).pow(2)
+    if not debias:
+        return float(d2.sum()), 0.0
+    return debiased_sq(d2, VA + VB, block)
 
 
 def family_specs(alpha) -> dict:
@@ -66,11 +80,15 @@ def run_collapse(st: Setting) -> dict:
     images = st.image_ids()
     tab = Table(st.store.rows("metrics"))
     rc = RefCache(st)
+    debias = bool(cc.get("debias", False))
+    block = int(cfg["convergence"].get("block", 28))
     ig = canon(cfg["gate1"]["ig_ref"])
     alphas = [int(a) for a in cc["alphas"]]
     eval_alphas = set(int(a) for a in cc["eval_alphas"])
     out = {"alphas": {}, "s_eps": {}}
-    lines = [f"# Data collapse — {st.tag} — {len(images)} ảnh\n"]
+    lines = [f"# Data collapse — {st.tag} — {len(images)} ảnh\n",
+             ("Chuẩn L2 khử nhiễu: ‖ΔA‖² − V_f − V_g (V từ sub-estimate). Ảnh có mẫu số không vượt 2·SE của "
+              "chính nó bị loại khỏi CI_fg (NaN).\n") if debias else "Chuẩn L2 thô (chưa khử nhiễu).\n"]
     tbl = ["| h | cặp | trung vị CI_fg | trung vị ‖ΔA‖/‖A_IG‖ | Q_f | Q_g | ΔQ | SE | CI 95% ΔQ | thu gọn | tách |",
            "|---|---|---|---|---|---|---|---|---|---|---|"]
     verdict_collapse_all, verdict_split_any = True, False
@@ -81,15 +99,21 @@ def run_collapse(st: Setting) -> dict:
         norms = {k: [] for k in ("ref",)}
         pair_ci = {pq: [] for pq in itertools.combinations(FAMS, 2)}
         pair_rel = {pq: [] for pq in pair_ci}
+        n_measurable = 0
         for im in images:
-            A_ig = rc.load(im, ig).double()
-            A = {f: rc.load(im, specs[f]).double() for f in FAMS}
-            den = float((A["beta"] - A_ig).norm())
+            A_ig, V_ig = rc.load(im, ig)
+            AV = {f: rc.load(im, specs[f]) for f in FAMS}
+            den_sq, den_se = _sq(AV["beta"][0], AV["beta"][1], A_ig, V_ig, debias, block)
+            # mẫu số chỉ dùng được khi phần có hệ thống của ‖A_beta − A_IG‖² vượt rõ nhiễu của chính nó
+            ok_den = den_sq > 0 and (not debias or den_sq > 2 * den_se)
+            n_measurable += int(ok_den)
+            den = den_sq ** 0.5 if ok_den else float("nan")
             nig = float(A_ig.norm())
             norms["ref"].append(den)
             for f, g in pair_ci:
-                num_ = float((A[f] - A[g]).norm())
-                pair_ci[(f, g)].append(num_ / den if den > 0 else float("nan"))
+                num_sq, _ = _sq(AV[f][0], AV[f][1], AV[g][0], AV[g][1], debias, block)
+                num_ = max(0.0, num_sq) ** 0.5
+                pair_ci[(f, g)].append(num_ / den if ok_den else float("nan"))
                 pair_rel[(f, g)].append(num_ / nig if nig > 0 else float("nan"))
         Q = {}
         for f in FAMS:
@@ -116,7 +140,10 @@ def run_collapse(st: Setting) -> dict:
             tbl.append(f"| 1/{a + 1}{'' if a in eval_alphas else ' (không xét)'} | {f}–{g} | {med_ci:.3f} | "
                        f"{med_rel:.4f} | {np.nanmean(Q[f]):.4f} | {np.nanmean(Q[g]):.4f} | {mdq:+.4f} | {se:.4f} | "
                        f"[{lo:+.4f}, {hi:+.4f}] | {'✓' if col else '✗'} | {'✓' if spl else '✗'} |")
-        rec["median_norm_beta_minus_ig"] = float(np.median(norms["ref"]))
+        rec["median_norm_beta_minus_ig"] = float(np.nanmedian(norms["ref"])) if n_measurable else float("nan")
+        rec["n_images_measurable_denominator"] = n_measurable
+        tbl.append(f"| 1/{a + 1} | (mẫu số ‖A_beta − A_IG‖ đo được trên {n_measurable}/{len(images)} ảnh) "
+                   "| | | | | | | | | |")
         out["alphas"][str(a)] = rec
 
     if verdict_split_any:

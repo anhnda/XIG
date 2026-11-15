@@ -99,6 +99,32 @@ def test_iou_tiebreak_and_valid():
     assert iou_topk(A2, mask, perm, valid) == 1.0
 
 
+def test_rel_change_debiased():
+    """Hai mức = cùng giá trị thật + độ lệch hệ thống + nhiễu độc lập: bản khử nhiễu phải thu hồi độ lệch."""
+    from spi_study.reference import rel_change
+    g = torch.Generator().manual_seed(0)
+    shape = (3, 56, 56)
+    T = torch.randn(shape, generator=g, dtype=F64)
+    bias = 0.3 * torch.randn(shape, generator=g, dtype=F64)
+
+    def level(shift, sd):
+        subs = [T + shift + sd * torch.randn(shape, generator=g, dtype=F64) for _ in range(4)]
+        return torch.stack(subs).mean(0), subs
+
+    At, s_t = level(0.0, 0.4)
+    Ap, s_p = level(bias, 0.4)
+    raw, deb, hi, noise = rel_change(At, s_t, Ap, s_p, block=7)
+    true = float(bias.norm() / At.norm())
+    assert raw > deb + 0.05                      # bản thô bị nhiễu thổi phồng
+    assert abs(deb - true) < 0.03, (deb, true)
+    assert hi >= deb
+    # không có độ lệch: bản khử nhiễu ≈ 0 dù bản thô lớn
+    At, s_t = level(0.0, 0.4)
+    Ap, s_p = level(0.0, 0.4)
+    raw, deb, _, _ = rel_change(At, s_t, Ap, s_p, block=7)
+    assert raw > 0.2 and deb < 0.08, (raw, deb)      # 0.08 ≈ 5 SE của ước lượng ở kích thước này
+
+
 def test_power_table():
     # bảng 6.5: SD_d 0.08/0.10/0.12/0.15 → 30/47/68/106 (protocol làm tròn; ceil có thể +1)
     for sd, n in [(0.08, 30), (0.10, 47), (0.12, 68), (0.15, 106)]:

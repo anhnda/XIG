@@ -44,7 +44,11 @@ ladders:
   spi_a1: {levels: [[8, 24], [16, 48], [32, 96], [64, 192]], extend: [[128, 192]]}
 
 convergence:
-  rel_l2: 0.05               # trung vị qua ảnh ‖A_top − A_prev‖/‖A_top‖
+  # debiased: ‖Ā_top − Ā_prev‖² − V_top − V_prev (V = phương sai MC theo phần tử từ 4 sub-estimate).
+  # raw: đúng 6.3. Smoke 2 ảnh: SPI raw 0.38–0.85 nhưng toàn bộ là nhiễu (khử nhiễu 0.00–0.04).
+  mode: debiased
+  block: 28                  # khối để tính SE của bản khử nhiễu (chỉ báo cáo)
+  rel_l2: 0.05               # trung vị qua ảnh của rel L2 (theo mode)
   iou: 0.005                 # trung bình |IoU_top − IoU_prev|
   max_extra_levels: 1        # "không đạt thì thêm một mức"
 
@@ -140,6 +144,7 @@ collapse:
   dq_floor: 0.01
   dq_split: 0.02
   eps: 0.05
+  debias: true               # khử nhiễu MC trong CI_fg (cùng cách với convergence.mode: debiased)
   s_eps: {N: 256, d: 4000, paths: 25, chunk: 5}
 
 pet:
