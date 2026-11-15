@@ -16,6 +16,8 @@ bằng `bash scripts/run.sh test`. Sau đó chạy `smoke` trên 2 ảnh trướ
 | 4 | 6.3: thang | Mỗi mức đều chia thành 4 sub-estimate, không chỉ mức cao nhất | Cùng chi phí, nhưng mức nào cũng có sai số chuẩn |
 | 5 | 6.6: "SE" trong \|Q_f − Q_g\| < max(2·SE, 0.01) | SE ghép cặp qua ảnh, tức sd(ΔQ)/√n | Protocol không nói rõ dùng SE nào |
 | 6 | Seed theo (ảnh, phương pháp, tham số, mức, b) | Thêm K, N vào khoá hash | Mức được thêm khi mở rộng thang luôn có seed riêng |
+| 7 | 6.3: hội tụ khi ‖A_top − A_prev‖/‖A_top‖ ≤ 0.05 | `convergence.mode: debiased`: √max(0, ‖Ā_top − Ā_prev‖² − V_top − V_prev)/‖Ā_top‖ ≤ 0.05, với V là phương sai Monte Carlo theo phần tử, ước lượng từ 4 sub-estimate. Bản thô, cận trên (+2·SE theo khối 28×28) và nhiễu của mức top đều được báo cáo | Smoke 2 ảnh: SPI có bản thô 0.38–0.85, khớp hoàn toàn với nhiễu dự đoán từ sub-estimate (nhiễu của mức top 0.21–0.42‖A‖). Bản khử nhiễu chỉ còn 0.00–0.04. Bản thô không bao giờ đạt được với ngân sách khả thi (cần khoảng 200× số đường), trong khi thang đã hội tụ về kỳ vọng. Đặt `mode: raw` để quay về đúng 6.3 |
+| 8 | 6.6: CI_fg = ‖A_f − A_g‖/‖A_beta − A_IG‖ | `collapse.debias: true`: tử số và mẫu số đều khử nhiễu theo cùng cách. Ảnh có mẫu số không vượt 2·SE của chính nó bị loại khỏi CI_fg, và số ảnh đo được ghi trong báo cáo | Cùng lý do với dòng 7: nhiễu theo phần tử lấn át khác biệt giữa các họ |
 
 Nếu muốn theo đúng 6.2: đổi `node=rand` thành `node=mid` trong `config.yaml` trước khi khoá. Khi đó
 U5 và U6 sẽ không qua, vì các test này kiểm theo đáp án population.
