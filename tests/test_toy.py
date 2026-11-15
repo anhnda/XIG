@@ -191,11 +191,31 @@ def test_u8_moments(key):
         m4 = float(((z - z.mean()) ** 4).mean())
         v_se = math.sqrt(max(m4 - v * v, 0.0) / n)
         assert abs(v - var_exp) < 4 * v_se + 1e-9, f"{key} t={t}: var {v:.6f} vs {var_exp:.6f} (se {v_se:.2e})"
-        if key.startswith("spi_dp") and not key.startswith("line"):
-            from scipy.stats import beta, kstest
+        if key.startswith("spi_dp"):
+            from scipy.stats import beta
             a = smp.alpha
-            p = kstest(z.numpy(), beta(a * t, a * (1 - t)).cdf).pvalue
-            assert p > 1e-3, f"{key} t={t}: KS p = {p:.2e}"
+            p = ks_censored(z.numpy(), beta(a * t, a * (1 - t)).cdf)
+            assert p > 1e-3, f"{key} t={t}: KS (kiểm duyệt) p = {p:.2e}"
+
+
+def ks_censored(z, cdf, lo=1e-12, hi=1 - 1e-12):
+    """KS một mẫu, kiểm duyệt hai đầu (0, lo] và [hi, 1).
+
+    float64 không biểu diễn được phần bù 1 − Z < 1.1e-16: với α nhỏ (Beta(0.9, 0.1) tại t = 0.9) vài phần
+    trăm mẫu trùng đúng 1.0. kstest coi phân phối liên tục nên tính D tại điểm hoà đó bằng cả khối dồn
+    (~2.5%) và bác bỏ sai. Ở đây chỉ so ECDF với CDF trên (lo, hi) và so khối hai đầu."""
+    import numpy as np
+    from scipy.stats import kstwo
+    z = np.sort(np.asarray(z, dtype=np.float64))
+    n = len(z)
+    i = np.arange(1, n + 1)
+    F = cdf(z)
+    ok = (z > lo) & (z < hi)
+    d = 0.0
+    if ok.any():
+        d = max(float((i / n - F)[ok].max()), float((F - (i - 1) / n)[ok].max()))
+    d = max(d, abs(float(np.mean(z <= lo)) - float(cdf(lo))), abs(float(np.mean(z < hi)) - float(cdf(hi))))
+    return float(kstwo.sf(d, n))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
