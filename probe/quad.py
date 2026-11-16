@@ -122,16 +122,16 @@ def idgi(G: torch.Tensor, dF: torch.Tensor, tol: float, scale=None) -> tuple[tor
         A = (w[keep] / s[keep].view(shape) * dF[keep].view(shape)).sum(0)
     else:
         A = torch.zeros_like(Gd[0])
-    return A.float(), {"n_dropped": int((~keep).sum()), "dropped_dF": float(dF[~keep].sum())}
+    return A.to(G.dtype), {"n_dropped": int((~keep).sum()), "dropped_dF": float(dF[~keep].sum())}
 
 
 def rules(ev: Evals, tol: float = 1e-12, std=None) -> tuple[dict, dict]:
     """-> ({tên quy tắc: A (C,H,W)}, thông tin). std: (C,1,1) cho idgi_raw (None = bỏ)."""
     dX = ev.X[1:] - ev.X[:-1]
     dF = ev.f[1:] - ev.f[:-1]
-    out = {"canon_left": (ev.g.double() * dX.double()).sum(0).float()}
+    out = {"canon_left": (ev.g.double() * dX.double()).sum(0).to(ev.g.dtype)}
     for q, (P, gP, U) in ev.Q.items():
-        out[f"canon_{q}"] = (gP.double() * dX.double()).sum(0).float()
+        out[f"canon_{q}"] = (gP.double() * dX.double()).sum(0).to(gP.dtype)
     out["idgi"], i0 = idgi(ev.g, dF, tol)
     info = {"idgi": i0, "D": float(ev.f[-1] - ev.f[0])}
     if std is not None:

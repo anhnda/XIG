@@ -22,7 +22,7 @@ class Signal:
     A*_i = a·(x_i − x_s,i) trên R, 0 ngoài R (với x_s = x′ thì tổng = B)."""
 
     def __init__(self, R: torch.Tensor, x0: torch.Tensor, a: float):
-        self.R = R.float()
+        self.R = R.to(x0.dtype)
         self.x0 = x0
         self.a = float(a)
 
