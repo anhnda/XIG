@@ -30,11 +30,7 @@ def load(path: str, debug: bool = False) -> dict:
     cfg["_path"] = os.path.abspath(path)
     cfg["_debug"] = bool(debug)
     if debug:
-        d = cfg.get("debug", {}) or {}
-        cfg = _merge(cfg, {k: v for k, v in d.items() if k != "n_images"})
-        n = int(d.get("n_images", 2))
-        for sec in ("exp_a", "exp_b", "exp_c", "sanity"):
-            cfg[sec]["n_images"] = n
+        cfg = _merge(cfg, cfg.get("debug", {}) or {})
         cfg["_debug"] = True
     return cfg
 

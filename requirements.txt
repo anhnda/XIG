@@ -5,3 +5,5 @@ h5py
 pyyaml
 pillow
 pytest
+pandas
+matplotlib

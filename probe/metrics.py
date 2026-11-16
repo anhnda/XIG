@@ -12,7 +12,6 @@ cos_deb        ⟨A,B⟩ / √((‖A‖² − ΣV_A)(‖B‖² − ΣV_B))  (cos
 spearman       tương quan hạng giữa m_A và m_B
 topk           |top_k(m_A) ∩ top_k(m_B)| / k
 insdel_<base>  AUC insertion − AUC deletion của xác suất softmax lớp đích (baseline blur hoặc đen)
-road           LeRF − MoRF (ROAD xấp xỉ, nội suy tuyến tính có nhiễu)
 """
 
 from __future__ import annotations
@@ -21,11 +20,9 @@ import math
 from typing import Optional
 
 import torch
-import torch.nn.functional as F
 
 from .config import seed_of
 from .data import MEAN, STD
-from .paths import gaussian_blur
 
 
 def amap(A: torch.Tensor) -> torch.Tensor:
@@ -128,48 +125,3 @@ def insdel(prob, x, base, A, n_steps, batch) -> float:
     ins, dele = torch.cat(ins), torch.cat(dele)
     auc = lambda v: float((v[:-1] + v[1:]).sum() / (2 * n_steps))
     return auc(ins) - auc(dele)
-
-
-_K = torch.tensor([[1 / 12, 1 / 6, 1 / 12], [1 / 6, 0.0, 1 / 6], [1 / 12, 1 / 6, 1 / 12]], dtype=torch.float64)
-
-
-def _impute(x, removed, iters, noise, gen):
-    _, C, H, W = x.shape
-    k = _K.to(x.device, x.dtype).view(1, 1, 3, 3).repeat(C, 1, 1, 1)
-    norm = F.conv2d(torch.ones(1, C, H, W, device=x.device, dtype=x.dtype), k, padding=1, groups=C)
-    rem = removed.to(x.device).view(1, 1, H, W).expand(1, C, H, W)
-    cur = torch.where(rem, x[~rem].mean().expand_as(x), x)
-    for _ in range(iters):
-        cur = torch.where(rem, F.conv2d(cur, k, padding=1, groups=C) / norm, x)
-    eps = torch.randn(x.shape, generator=gen, dtype=torch.float64).to(x.device, x.dtype)
-    return torch.where(rem, cur + noise * eps, cur)
-
-
-@torch.no_grad()
-def road(prob, x, A, fracs, iters, noise, seed) -> float:
-    _, C, H, W = x.shape
-    n = H * W
-    order = torch.argsort(amap(A).flatten(), descending=True).cpu()
-    gen = torch.Generator().manual_seed(int(seed))
-    mo, le = [], []
-    for fr in fracs:
-        k = int(round(fr * n))
-        rm = torch.zeros(n, dtype=torch.bool); rm[order[:k]] = True
-        mo.append(float(prob(_impute(x, rm.view(H, W), iters, noise, gen))[0]))
-        rl = torch.zeros(n, dtype=torch.bool); rl[order[n - k:]] = True
-        le.append(float(prob(_impute(x, rl.view(H, W), iters, noise, gen))[0]))
-    return sum(le) / len(le) - sum(mo) / len(mo)
-
-
-def quality(A, V, mask, perm, prob, x, mcfg, seed, full: bool = True) -> dict:
-    row = {"energy_mask": energy_mask(A, V, mask), "energy_total": energy_total(A, V),
-           "iou": iou(A, mask, perm), "cancel": cancel(A), "sumA": float(A.double().sum())}
-    if full:
-        ic = mcfg["insdel"]
-        for b in ic["bases"]:
-            row[f"insdel_{b}"] = insdel(prob, x, make_base(x, b, ic["blur_kernel"], ic["blur_sigma"]),
-                                        A, ic["n_steps"], ic["batch"])
-        rc = mcfg["road"]
-        if rc.get("enabled", True):
-            row["road"] = road(prob, x, A, rc["fracs"], rc["iters"], rc["noise"], seed)
-    return row

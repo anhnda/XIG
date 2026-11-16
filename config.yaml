@@ -1,9 +1,6 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# attr_probe: đường đi × quy tắc chia credit, bẫy gradient, giữ tín hiệu, sanity check.
-#
-# Pilot (--split pilot): không cần khoá. Xác nhận (--split confirm): phải `lock` trước, mọi khoá
-# ngoài `local:` và `debug:` được băm.
-# --debug: ghi đè bằng mục `debug:` (vài ảnh, ít bước), ghi vào <out>_debug.
+# attr_probe — Attribution Mechanism Pilot (P0–P3).
+# --debug: ghi đè bằng mục `debug:` (ít ảnh, ít bước), ghi vào <out>_debug.
 # Viết số thực dạng 0.0001; vô cực viết .inf.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -18,63 +15,79 @@ model:
 data:
   size: 224
   index_seed: 7
-  n_pilot: 20                # ảnh cho A, B, C, sanity (pilot)
-  n_confirm: 50              # ảnh cho xác nhận (D), không giao với pilot
-  n_other: 10                # ảnh "khác" để kiểm H có vô hại với hành vi không
+  n_pilot: 20
+  n_confirm: 50
+  n_other: 10
 
-baseline: black
-
-# Đường đi. Mọi phương pháp trả về các trạng thái x_0..x_N, f(x_k) và ∂f/∂x tại x_k.
-methods:
+# Họ đường (chỉ sinh nút; ig phải có, là đường tham chiếu cho bẫy).
+paths:
   ig:     {kind: straight, steps: 128}
-  spi10:  {kind: spi, alpha: 10, steps: 64, paths: 32, n_sub: 4}
+  spi10:  {kind: spi, alpha: 10, steps: 64, paths: 32, k_group: 8}   # k_group: cỡ nhóm cho thống kê K=8
   guided: {kind: guided, steps: 128, fraction: 0.25, max_dist: 0.02}
   blur:   {kind: blur, steps: 100, max_sigma: 50.0}
 
-# Quy tắc chia credit trên CÙNG các trạng thái:
-#   canonical: Σ_k g_k ⊙ (x_{k+1} − x_k)              (Riemann trái)
-#   idgi:      Σ_k g_k²/‖g_k‖² · (f(x_{k+1}) − f(x_k))  (Yang et al., CVPR 2023)
-rules: [canonical, idgi]
+# Điểm cầu phương thêm (ngoài nút) ở stage main. canon_left luôn có.
+# Quy tắc canonical chính của P1–P3 = canon_rand nếu có "rand".
+quadrature: [rand]
+idgi_zero_tol: 1.0e-12       # bỏ bước IDGI có ‖g_k‖² ≤ tol · max_k ‖g_k‖²; ΔF bị bỏ báo trong dropped_dF_rel
 
 metrics:
   topk_frac: 0.05
   insdel: {bases: [blur, black], n_steps: 50, batch: 26, blur_kernel: 31, blur_sigma: 10.0}
-  road: {enabled: true, fracs: [0.1, 0.3, 0.5, 0.7, 0.9], iters: 200, noise: 0.01}
 
+# P0 — hội tụ (lưới lồng nhau; N phải là bội của nhau)
+convergence:
+  n_images: 3
+  N: [32, 64, 128, 256]
+  spi_realizations: 4
+  quadrature: [left, mid, rand]
+
+# P1 — đường × quy tắc
 exp_a:
-  n_images: 20
+  n_images: 16
+  diag_step_images: 3        # số ảnh ghi chẩn đoán IDGI từng bước (idgi_steps.csv)
+  heatmap_images: 2
 
+# P2 — tín hiệu cộng tính đã biết (trên exp_c.n_images ảnh đầu của exp_a)
+exp_c:
+  n_images: 6
+  B_frac: 0.5                # tổng đóng góp đúng B = ±B_frac·|F(x) − F(x′)|
+  sizes: [2, 8, 24]          # cạnh ô vuông (pixel, cả 3 kênh): 4 / 64 / 576 pixel = 12 / 192 / 1728 phần tử
+  locations: [inside, outside]
+  neg_sign_for: [24]         # thêm dấu âm cho các cỡ này
+  scatter_pixels: 576        # tín hiệu phân tán: 576 pixel ngẫu nhiên (1728 phần tử), cùng số phần tử với ô 24×24
+  scatter_signs: [1, -1]
+  inside_min: 0.8
+  outside_max: 0.05
+  min_denominator: 0.05      # trung bình (x − x′) trên R tối thiểu (đơn vị chuẩn hoá)
+  tries: 400
+  region_retries: 20
+
+# P3 — bẫy gradient quanh đường IG (trên exp_b.n_images ảnh đầu của exp_a). Lưới chéo, không đầy đủ:
+#   ρ ∈ rho với η = eta_ref;  η ∈ eta với ρ = rho_ref;  + u tần số thấp tại (rho_ref, eta_ref)
 exp_b:
   n_images: 6
-  shapes: [line, bent]       # line: quanh đường IG (đối chứng dương); bent: đường cong không phương pháp nào đi theo
-  rho: [0.01, 0.03, 0.1, 0.3, .inf]    # độ rộng ống r = rho·‖Δx‖; SPI α=10 dự đoán chuyển tiếp ở ρ ≈ 0.03–0.3
-  u: [high, low]             # tần số không gian của hướng bẫy
-  tau: [1.0]                 # κ chọn sao cho thay đổi IG (giải tích) = tau·‖A_IG(F)‖
-  bend: 0.1                  # độ cong của "bent": c(s) = x′ + sΔx + bend·‖Δx‖·sin(πs)·q
-  low_sigma: 8.0             # σ (pixel) làm mượt u, q kiểu "low"
-  noise_sigma: 0.1           # kiểm vô hại: H tại x + N(0, σ²) (đơn vị chuẩn hoá)
-
-exp_c:
-  n_images: 10
-  patch: 24                  # cạnh ô vuông R (pixel, mọi kênh)
-  gamma: 0.5                 # tổng đóng góp kỳ vọng của S = ±gamma·|D|
-  inside_min: 0.8            # ô "trong vật": ≥ 80% diện tích thuộc mask
-  outside_max: 0.05          # ô "ngoài vật": ≤ 5%
-  tries: 200
-
-sanity:
-  n_images: 10
-  cascade: [fc, layer4, layer3, layer2]   # khởi tạo lại tích luỹ từ đầu ra vào trong
+  rho: [0.03, 0.1, 0.2, 0.3]
+  eta: [0.1, 1.0, 3.0]
+  rho_ref: 0.1
+  eta_ref: 1.0
+  u_low_at_ref: true
+  low_sigma: 8.0             # σ (pixel) làm mượt u kiểu "low"
+  noise_sigma: 0.1           # kiểm hành vi: H tại x + N(0, σ²)
+  noise_samples: 16
+  n_other: 4                 # số ảnh khác (split other) để đo |H|
 
 debug:
-  n_images: 2
-  methods:
+  paths:
     ig:     {steps: 16}
-    spi10:  {steps: 12, paths: 8}
+    spi10:  {steps: 8, paths: 4, k_group: 2}
     guided: {steps: 16}
     blur:   {steps: 12}
-  exp_b: {rho: [0.01, .inf], u: [high], shapes: [line]}
-  metrics: {insdel: {n_steps: 10}, road: {enabled: false}}
+  convergence: {n_images: 1, N: [8, 16, 32], spi_realizations: 2}
+  exp_a: {n_images: 2, diag_step_images: 1, heatmap_images: 1}
+  exp_c: {n_images: 1, sizes: [2, 24], scatter_signs: [1]}
+  exp_b: {n_images: 1, rho: [0.03, 0.3], eta: [1.0], u_low_at_ref: false, noise_samples: 4, n_other: 1}
+  metrics: {insdel: {n_steps: 10}}
 
 # ─────────────────────────────────────────────────────────────────────────────
 local:

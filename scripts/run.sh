@@ -1,28 +1,26 @@
 #!/usr/bin/env bash
 # bash scripts/run.sh <stage>
-#   test     unit test trên toy (CPU, < 1 phút)
-#   debug    toàn bộ A, B, C, sanity ở chế độ debug (2 ảnh, ít bước) → runs_probe_debug/pilot/report.md
-#   info     danh sách ảnh và số eval mỗi biến thể
-#   a|b|c|sanity   từng thí nghiệm trên pilot (in ước tính thời gian trước khi chạy)
-#   pilot    a → b → c → sanity trên pilot
-#   lock     khoá config (REASON="...")
-#   confirm  a → b → c → sanity trên 50 ảnh xác nhận (cần lock)
-#   report   gom lại report.md (SPLIT=pilot|confirm)
+#   test       unit test (CPU, vài giây) → tests_report.txt (báo cáo sẽ chép vào)
+#   debug      toàn pipeline ở chế độ debug (vài ảnh, ít bước) → runs_probe_debug/pilot/ATTR_PROBE_PILOT_REPORT.md
+#   estimate   đo tốc độ GPU, in ước tính thời gian (không chạy thí nghiệm)
+#   conv       P0 hội tụ
+#   main       P1 + P2 + P3
+#   pilot      conv → main → report   (đầy đủ)
+#   report     dựng lại đồ thị + báo cáo từ CSV đã có (DEBUG=1 cho thư mục debug)
 # env: CFG=config.yaml, EXTRA="--device cuda:1"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-STAGE=${1:?stage: test|debug|info|a|b|c|sanity|pilot|lock|confirm|report}
+STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report}
 CFG=${CFG:-config.yaml}
 EXTRA=${EXTRA:-}
 PY="python -m probe --config $CFG $EXTRA"
 case "$STAGE" in
-  test)    python -m pytest -q tests ;;
-  debug)   $PY --debug all ;;
-  info)    $PY info ;;
-  a|b|c|sanity) $PY "$STAGE" ;;
-  pilot)   $PY all ;;
-  lock)    $PY lock --reason "${REASON:?REASON=\"...\" bắt buộc}" ;;
-  confirm) $PY --split confirm all ;;
-  report)  $PY --split "${SPLIT:-pilot}" report ;;
+  test)     python -m pytest -q tests 2>&1 | tee tests_report.txt ;;
+  debug)    $PY --debug all ;;
+  estimate) $PY estimate ;;
+  conv)     $PY conv ;;
+  main)     $PY main ;;
+  pilot)    $PY all ;;
+  report)   if [ "${DEBUG:-0}" = "1" ]; then $PY --debug report; else $PY report; fi ;;
   *) echo "stage không biết: $STAGE"; exit 1 ;;
 esac

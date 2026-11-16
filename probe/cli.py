@@ -1,14 +1,13 @@
 """
-python -m probe [--config config.yaml] [--debug] [--split pilot|confirm] [--device cuda] <lệnh>
+python -m probe [--config config.yaml] [--debug] [--device cuda] <lệnh>
 
-  lock     khoá config (bắt buộc trước --split confirm)
-  info     in danh sách ảnh của các split và ước tính số eval
-  a        thí nghiệm A: đường đi × quy tắc chia credit
-  b        thí nghiệm B: bẫy gradient
-  c        thí nghiệm C: giữ tín hiệu đã biết
-  sanity   khởi tạo lại tích luỹ theo tầng
-  report   gom kết quả thành report.md
-  all      a → b → c → sanity → report
+  estimate  đo tốc độ GPU, in ước tính thời gian conv/main (không chạy thí nghiệm)
+  conv      P0: hội tụ theo N (left/mid/rand, IDGI các biến thể)
+  main      P1 + P2 + P3 trong một lượt mỗi ảnh
+  report    đồ thị + ATTR_PROBE_PILOT_REPORT.md từ các CSV đã có
+  all       conv → main → report
+
+Kết quả: <local.out>[_debug]/pilot/. Chạy lại sẽ bỏ qua ảnh đã có trong cache (cùng hash config).
 """
 
 from __future__ import annotations
@@ -21,41 +20,35 @@ from . import config as C
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="probe", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default="config.yaml")
-    ap.add_argument("--debug", action="store_true", help="vài ảnh, ít bước; ghi vào <out>_debug")
-    ap.add_argument("--split", default="pilot", choices=["pilot", "confirm"])
+    ap.add_argument("--debug", action="store_true", help="ghi đè bằng mục debug: (ít ảnh, ít bước); ghi vào <out>_debug")
     ap.add_argument("--device", default=None)
-    ap.add_argument("cmd", choices=["lock", "info", "a", "b", "c", "sanity", "report", "all"])
-    ap.add_argument("--reason", default="")
+    ap.add_argument("cmd", choices=["estimate", "conv", "main", "report", "all"])
     args = ap.parse_args(argv)
     cfg = C.load(args.config, debug=args.debug)
 
-    if args.cmd == "lock":
-        C.write_lock(cfg, args.reason)
-        return
-    if args.split == "confirm":
-        if args.debug:
-            raise SystemExit("--split confirm không đi cùng --debug")
-        C.require_lock(cfg)
     if args.cmd == "report":
         from .report import write
-        write(C.out_dir(cfg, args.split))
+        write(C.out_dir(cfg, "pilot"), cfg)
         return
 
-    from . import experiments as E
-    ctx = E.Ctx(cfg, args.split, args.device)
-    if args.cmd == "info":
-        b, q = E.evals_per_variant(cfg)
+    from . import pilot as P
+    ctx = P.Ctx(cfg, args.device)
+    if args.cmd == "estimate":
+        b = P.bench(ctx)
+        e = P.estimate(cfg, b)
+        print(f"{b['per_eval'] * 1e3:.2f} ms/eval (lô {ctx.batch}), {b['per_seq'] * 1e3:.1f} ms/bước Guided")
+        print(f"conv ≈ {e['conv_min']:.1f} phút ({cfg['convergence']['n_images']} ảnh)")
+        print(f"main ≈ {e['main_min']:.1f} phút ({cfg['exp_a']['n_images']} ảnh A; tín hiệu {e['n_signal_variants']} biến thể × "
+              f"{cfg['exp_c']['n_images']} ảnh; bẫy {e['n_trap_variants']} biến thể × {cfg['exp_b']['n_images']} ảnh)")
+        print(f"mỗi ảnh A: {e['evals_per_image_A']} eval theo lô + {e['seq_per_image_A']} eval tuần tự")
         print({k: (v if isinstance(v, int) else len(v)) for k, v in ctx.sp.items()})
-        print(f"mỗi biến thể mô hình, mỗi ảnh: {b} eval theo lô + {q} eval tuần tự (Guided IG)")
-        nb = len(cfg["exp_b"]["shapes"]) * len(cfg["exp_b"]["u"]) * len(cfg["exp_b"]["rho"]) * len(cfg["exp_b"]["tau"])
-        print(f"số biến thể: A 1, B {nb} (+ gốc), C 4 (+ gốc), sanity {len(cfg['sanity']['cascade'])} (+ gốc)")
         return
-    steps = {"a": [E.run_a], "b": [E.run_b], "c": [E.run_c], "sanity": [E.run_sanity],
-             "all": [E.run_a, E.run_b, E.run_c, E.run_sanity]}[args.cmd]
-    for f in steps:
-        f(ctx)
+    if args.cmd in ("conv", "all"):
+        P.run_stage(ctx, "conv")
+    if args.cmd in ("main", "all"):
+        P.run_stage(ctx, "main")
     from .report import write
-    write(ctx.out)
+    write(ctx.out, cfg)
 
 
 if __name__ == "__main__":
