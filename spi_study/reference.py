@@ -239,7 +239,12 @@ def run_converge(st: Setting, group: str, extend: bool = False) -> int:
              "|---|---|---|---|---|---|---|---|---|---|"]
     result, extended = {}, False
     seed = cfg["seed"]
-    masks = {im: store.load_mask(im) for im in images if store.has_meta(im)}
+    dev = st.device
+    masks = {}
+    for im in images:
+        if store.has_meta(im):
+            mk, vl = store.load_mask(im)
+            masks[im] = (mk.to(dev), None if vl is None else vl.to(dev))
     for task in tasks_of(cfg, group):
         if "ladder" not in task:
             continue
@@ -256,8 +261,8 @@ def run_converge(st: Setting, group: str, extend: bool = False) -> int:
         top, prev = done[-1], done[-2]
         raw, deb, hi, noise, diou, de = [], [], [], [], [], []
         for im in images:
-            At, st_ = store.load_level(im, spec, top, B)
-            Ap, sp_ = store.load_level(im, spec, prev, B)
+            At, st_ = store.load_level(im, spec, top, B, device=dev)
+            Ap, sp_ = store.load_level(im, spec, prev, B, device=dev)
             r, d, u, z = rel_change(At, st_, Ap, sp_, block)
             raw.append(r); deb.append(d); hi.append(u); noise.append(z)
             mask, valid = masks[im]

@@ -45,7 +45,7 @@ def run_energy(st: Setting, group: str, line: bool = False) -> None:
                 if (im, spec, L) in done or not all(store.has_attr(im, spec, L, b) for b in range(B)):
                     continue
                 mask, valid = store.load_mask(im)
-                A, subs = store.load_level(im, spec, L, B)
+                A, subs = store.load_level(im, spec, L, B, device=st.device)
                 V = level_var(subs) if B > 1 else None
                 store.append("energy", {"image": im, "spec": spec, "level": L, "K": K, "N": N, "b": "mean",
                                         "energy_deb": energy_frac(A, mask, valid, V),
@@ -62,8 +62,8 @@ def run_energy(st: Setting, group: str, line: bool = False) -> None:
                         | {Fraction(2, int(cfg["collapse"]["alpha_line"]) + 1)})
         for im in images:
             mask, valid = store.load_mask(im)
-            Ai, si = store.load_level(im, ig, lv[ig], B)
-            A1, s1 = store.load_level(im, a1, lv[a1], B)
+            Ai, si = store.load_level(im, ig, lv[ig], B, device=st.device)
+            A1, s1 = store.load_level(im, a1, lv[a1], B, device=st.device)
             Vi, V1 = level_var(si), level_var(s1)
             for s in s_list:
                 spec = canon(f"line:s={frac_str(s)}")

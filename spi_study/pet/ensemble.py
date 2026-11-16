@@ -105,7 +105,7 @@ class Models:
 
     def __init__(self, cfg: dict, out: str, seeds: list[int], device=None):
         self.cfg = cfg
-        self.sts = {s: Setting(cfg, "pet", out, device or "cpu", pet_seed=s, target="label") for s in seeds}
+        self.sts = {s: Setting(cfg, "pet", out, device, pet_seed=s, target="label") for s in seeds}
         self.seeds = seeds
 
     def images(self) -> list[str]:
@@ -128,7 +128,7 @@ class Models:
             return (1 - sv) * Ai + sv * A1, (1 - sv) ** 2 * vi + sv ** 2 * v1
         B = n_sub_of(self.cfg, spec)
         L = top_level(self.cfg, st, spec)
-        A, subs = st.store.load_level(im, spec, L, B)
+        A, subs = st.store.load_level(im, spec, L, B, device=st.device)
         S = torch.stack(subs).double()
         var = S.var(dim=0, unbiased=True) / B if B > 1 else torch.zeros_like(S[0])
         return A.double(), var
@@ -154,7 +154,7 @@ def run_ensemble(cfg: dict, out: str, root: str, device) -> dict:
     seeds = [int(s) for s in cfg["pet"]["seeds"]]
     if len(seeds) < 2:
         raise SystemExit("cần ≥ 2 seed")
-    mods = Models(cfg, out, seeds)
+    mods = Models(cfg, out, seeds, device)
     images = mods.images()
     dmin = float(cfg["pet"]["d_min"])
     keep = [im for im in images if all(abs(mods.D(s, im)) >= dmin for s in seeds)]

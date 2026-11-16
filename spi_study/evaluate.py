@@ -86,13 +86,13 @@ def run_eval(st: Setting, group: str, line: bool = False) -> None:
                     need += [(b, b) for b in range(n_sub)]
                 if all((im, spec, L, b) in done for b, _ in need):
                     continue
-                A_mean, subs = store.load_level(im, spec, L, n_sub)
+                A_mean, subs = store.load_level(im, spec, L, n_sub, device=st.device)
                 for b, j in need:
                     emit(spec, L, K, N, b, A_mean if j is None else subs[j])
         if line:
             n_sub = n_sub_of(cfg, ig)
-            A_ig, s_ig = store.load_level(im, ig, lv[ig], n_sub)
-            A_1, s_1 = store.load_level(im, a1, lv[a1], n_sub)
+            A_ig, s_ig = store.load_level(im, ig, lv[ig], n_sub, device=st.device)
+            A_1, s_1 = store.load_level(im, a1, lv[a1], n_sub, device=st.device)
             Kig, Nig = levels_of(cfg, find_task(cfg, ig), store)[lv[ig]]
             K1, N1 = levels_of(cfg, find_task(cfg, a1), store)[lv[a1]]
             for s in s_list:

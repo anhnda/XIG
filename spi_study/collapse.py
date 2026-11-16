@@ -57,7 +57,8 @@ class RefCache:
             Ai, Vi = self.load(image, ig)
             A1, V1 = self.load(image, a1)
             return (1 - s) * Ai + s * A1, (1 - s) ** 2 * Vi + s ** 2 * V1
-        A, subs = self.st.store.load_level(image, spec, self.level(spec), n_sub_of(self.cfg, spec))
+        A, subs = self.st.store.load_level(image, spec, self.level(spec), n_sub_of(self.cfg, spec),
+                                           device=self.st.device)
         V = level_var(subs) if len(subs) > 1 else torch.zeros_like(A, dtype=torch.float64)
         return A.double(), V
 
@@ -183,11 +184,11 @@ def run_collapse(st: Setting) -> dict:
         for f, spec in family_specs(a).items():
             name, p = parse_spec(spec)
             smp = make_sampler(name, p, int(se_cfg["N"]))
-            gen = generator(seed_of(cfg["seed"], "s_eps", spec), "cpu")
+            gen = generator(seed_of(cfg["seed"], "s_eps", spec), st.device)
             vals[f] = s_eps(smp, float(cc["eps"]), int(se_cfg["paths"]), (int(se_cfg["d"]),), gen,
                             chunk=int(se_cfg.get("chunk", 5)))
         vals["ig"] = s_eps(make_sampler("ig_mid", {}, int(se_cfg["N"])), float(cc["eps"]), 1, (1,),
-                           generator(0, "cpu"))
+                           generator(0, st.device))
         out["s_eps"][str(a)] = vals
         sl.append(f"| 1/{a + 1} | {vals['beta']:.4f} | {vals['mix']:.4f} | {vals['line']:.4f} | {vals['ig']:.4f} |")
 

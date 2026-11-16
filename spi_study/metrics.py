@@ -61,9 +61,11 @@ def tie_perm(image: str, n: int, seed: int) -> torch.Tensor:
 
 def iou_topk(attr: torch.Tensor, mask: torch.Tensor, perm: torch.Tensor,
              valid: Optional[torch.Tensor] = None) -> float:
-    m = attribution_map(attr).double().flatten().cpu()
-    mk = mask.flatten().bool().cpu()
-    v = torch.ones_like(mk) if valid is None else valid.flatten().bool().cpu()
+    m = attribution_map(attr).double().flatten()             # tính trên thiết bị của attr
+    dev = m.device
+    mk = mask.flatten().bool().to(dev)
+    v = torch.ones_like(mk) if valid is None else valid.flatten().bool().to(dev)
+    perm = perm.to(dev)
     cand = perm[v[perm]]                                     # pixel hợp lệ, theo thứ tự hoán vị
     k = int((mk & v).sum())
     if k == 0:
@@ -88,13 +90,14 @@ def energy_frac(attr: torch.Tensor, mask: torch.Tensor, valid: Optional[torch.Te
     E[Â²] = A² + V nên tử và mẫu là ước lượng không chệch của năng lượng population. var=None cho
     bản thô (bị nhiễu kéo về tỉ lệ diện tích). Pixel ngoài `valid` (biên trimap) bị loại khỏi cả hai."""
     a = attr[0] if attr.dim() == 4 else attr
+    dev = a.device
     e = a.double().pow(2)
     if var is not None:
-        e = e - var.double().to(e.device)
-    e = e.sum(dim=0).cpu()                                    # (H, W)
-    mk = mask.bool().cpu()
+        e = e - var.to(device=dev, dtype=torch.float64)
+    e = e.sum(dim=0)                                          # (H, W), trên thiết bị của attr
+    mk = mask.to(dev).bool()
     if valid is not None:
-        v = valid.bool().cpu()
+        v = valid.to(dev).bool()
         e, mk = e[v], mk[v]
     tot = float(e.sum())
     return float(e[mk].sum()) / tot if tot > 0 else float("nan")
