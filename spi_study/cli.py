@@ -8,6 +8,7 @@ Lệnh
   attr          tính attribution của một nhóm task (chạy tiếp được)
   converge      kiểm hội tụ của thang; --extend thêm một mức nếu chưa hội tụ (mã thoát 3 = cần chạy lại attr)
   eval          tính metric từ attribution đã lưu; --line thêm LINE(s)
+  energy        tỉ lệ năng lượng khử nhiễu trong mask (CPU, chỉ đọc attribution); --line thêm LINE(s)
   gate1         Cửa 1: thống kê và quyết định
   collapse      Giai đoạn 1B: chỉ số thu gọn, Q_f(h), S_ε, kết luận Cổng 2
   pet-train     huấn luyện một ResNet-18 Pet (--seed)
@@ -63,12 +64,12 @@ def main(argv=None) -> None:
     p = sub.add_parser("power"); _common(p)
     p.add_argument("--old-jsonl", default=None)
 
-    for name in ("attr", "converge", "eval"):
+    for name in ("attr", "converge", "eval", "energy"):
         p = sub.add_parser(name); _common(p)
         p.add_argument("--group", required=True)
         if name == "converge":
             p.add_argument("--extend", action="store_true")
-        if name == "eval":
+        if name in ("eval", "energy"):
             p.add_argument("--line", action="store_true")
 
     p = sub.add_parser("gate1"); _common(p)
@@ -123,6 +124,11 @@ def main(argv=None) -> None:
     if args.cmd == "eval":
         from .evaluate import run_eval
         run_eval(_setting(cfg, args, _target(cfg, args.group)), args.group, line=args.line)
+        return
+
+    if args.cmd == "energy":
+        from .energy import run_energy
+        run_energy(_setting(cfg, args, _target(cfg, args.group)), args.group, line=args.line)
         return
 
     if args.cmd == "gate1":

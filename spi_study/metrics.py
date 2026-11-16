@@ -77,6 +77,30 @@ def iou_topk(attr: torch.Tensor, mask: torch.Tensor, perm: torch.Tensor,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# tỉ lệ năng lượng trong mask (khử nhiễu Monte Carlo)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def energy_frac(attr: torch.Tensor, mask: torch.Tensor, valid: Optional[torch.Tensor] = None,
+                var: Optional[torch.Tensor] = None) -> float:
+    """E = Σ_{p∈mask} Σ_c (A² − V) / Σ_p Σ_c (A² − V).
+
+    A là trung bình của các sub-estimate, V là phương sai MC theo phần tử của nó (s²/n_sub). Vì
+    E[Â²] = A² + V nên tử và mẫu là ước lượng không chệch của năng lượng population. var=None cho
+    bản thô (bị nhiễu kéo về tỉ lệ diện tích). Pixel ngoài `valid` (biên trimap) bị loại khỏi cả hai."""
+    a = attr[0] if attr.dim() == 4 else attr
+    e = a.double().pow(2)
+    if var is not None:
+        e = e - var.double().to(e.device)
+    e = e.sum(dim=0).cpu()                                    # (H, W)
+    mk = mask.bool().cpu()
+    if valid is not None:
+        v = valid.bool().cpu()
+        e, mk = e[v], mk[v]
+    tot = float(e.sum())
+    return float(e[mk].sum()) / tot if tot > 0 else float("nan")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # insertion / deletion (copy từ code đã tái lập)
 # ─────────────────────────────────────────────────────────────────────────────
 

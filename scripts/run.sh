@@ -12,6 +12,7 @@
 #   smoke       2 ảnh, thang rút gọn tự nhiên của nhóm stage1a, ghi vào runs_smoke/ (kiểm đường ống)
 # Giai đoạn 1A
 #   s1a         attr + converge (tự thêm mức nếu chưa hội tụ) + eval + gate1   → runs/imagenet/gate1.md
+#   s1a_post    tính lại energy + hội tụ + gate1 từ attribution đã có (không GPU)
 #   s1a_bq      (tuỳ chọn) SPI_BQ 8×24, α ∈ {10, 100}
 # Giai đoạn 1B (chỉ khi gate1 = POSITIVE)
 #   s1b         attr + converge + eval --line + collapse                       → runs/imagenet/collapse.md
@@ -25,7 +26,7 @@
 # env: SEEDS="0 1 2", PET_SEED=0, OUT=runs (ghi đè local.out), EXTRA="--device cuda:1"
 set -euo pipefail
 
-STAGE=${1:?stage: test|test_slow|power|lock|index|smoke|s1a|s1a_bq|s1b|pet_train|pet_index|pet_models|pet_s1a|s2}
+STAGE=${1:?stage: test|test_slow|power|lock|index|smoke|s1a|s1a_post|s1a_bq|s1b|pet_train|pet_index|pet_models|pet_s1a|s2}
 CFG=${2:-config.yaml}
 SEEDS=${SEEDS:-"0 1 2"}
 PET_SEED=${PET_SEED:-0}
@@ -66,6 +67,11 @@ case "$STAGE" in
   s1a)
     attr_loop stage1a
     $PY eval --group stage1a $OUTARG $EXTRA
+    $PY energy --group stage1a $OUTARG $EXTRA
+    $PY gate1 $OUTARG $EXTRA ;;
+  s1a_post)   # chỉ tính lại báo cáo 1A từ attribution đã có (CPU): energy, hội tụ, gate1
+    $PY energy --group stage1a $OUTARG $EXTRA
+    set +e; $PY converge --group stage1a $OUTARG $EXTRA; set -e
     $PY gate1 $OUTARG $EXTRA ;;
   s1a_bq)
     $PY attr --group stage1a_bq $OUTARG $EXTRA
@@ -73,6 +79,7 @@ case "$STAGE" in
   s1b)
     attr_loop stage1b
     $PY eval --group stage1b --line $OUTARG $EXTRA
+    $PY energy --group stage1b --line $OUTARG $EXTRA
     $PY collapse $OUTARG $EXTRA ;;
   pet_train)
     for s in $SEEDS; do $PY pet-train --seed "$s" $OUTARG $EXTRA; done ;;
@@ -81,6 +88,7 @@ case "$STAGE" in
   pet_s1a)
     attr_loop stage1a --setting pet --pet-seed "$PET_SEED"
     $PY eval --group stage1a --setting pet --pet-seed "$PET_SEED" $OUTARG $EXTRA
+    $PY energy --group stage1a --setting pet --pet-seed "$PET_SEED" $OUTARG $EXTRA
     $PY gate1 --setting pet --pet-seed "$PET_SEED" $OUTARG $EXTRA ;;
   s2)
     for s in $SEEDS; do

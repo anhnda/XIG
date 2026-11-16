@@ -49,8 +49,13 @@ convergence:
   mode: debiased
   block: 28                  # khối để tính SE của bản khử nhiễu (chỉ báo cáo)
   rel_l2: 0.05               # trung vị qua ảnh của rel L2 (theo mode)
-  iou: 0.005                 # trung bình |IoU_top − IoU_prev|
-  max_extra_levels: 1        # "không đạt thì thêm một mức"
+  # q_metric: energy_deb = |trung bình có dấu ΔE| ≤ q_tol, E = tỉ lệ năng lượng Σ(Ā² − V) trong mask.
+  # iou = đúng 6.3 (trung bình |ΔIoU| ≤ iou). Cửa 1 (50 ảnh): IoU của SPI còn trôi +0.008/mức ở 128 đường
+  # vì nhiễu MC kéo IoU xuống; E khử nhiễu ổn định ≤ 0.003 từ mức 1.
+  q_metric: energy_deb
+  q_tol: 0.005
+  iou: 0.005                 # trung bình |IoU_top − IoU_prev| (khi q_metric: iou)
+  max_extra_levels: 0        # 1A đã dùng 1 mức mở rộng; 1B: L2 khử nhiễu hội tụ ở thang gốc
 
 # Spec: tên:k=v,… ; node=rand là luật nút không chệch (xem README, mục "Lệch khỏi protocol").
 groups:
@@ -145,6 +150,7 @@ collapse:
   dq_split: 0.02
   eps: 0.05
   debias: true               # khử nhiễu MC trong CI_fg (cùng cách với convergence.mode: debiased)
+  q_metric: energy_deb       # Q_f(h); iou = đúng 6.6 (bị nhiễu MC làm chệch khác nhau giữa các họ)
   s_eps: {N: 256, d: 4000, paths: 25, chunk: 5}
 
 pet:

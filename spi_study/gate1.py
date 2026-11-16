@@ -141,6 +141,29 @@ def run_gate1(st: Setting, group: str = "stage1a") -> dict:
             lines.append(f"| {r['spec']} | {a.mean():.4f} | {b.mean():.4f} | {d.mean():+.4f} | "
                          f"[{lo:+.4f}, {hi:+.4f}] | {p:.3g} |")
 
+    # độ nhạy với nhiễu MC (không đổi quyết định đã chốt theo IoU)
+    etab = Table(st.store.rows("energy"))
+    if etab.t:
+        lines += ["\n## Độ nhạy với nhiễu Monte Carlo (không đổi quyết định)\n",
+                  "IoU trên Σ_c|A| bị nhiễu MC kéo xuống (nhiễu SPI ~0.2–0.4‖A‖, IG ~0.01‖A‖) → d theo IoU là "
+                  "ước lượng thận trọng. energy_deb = tỉ lệ năng lượng Σ(Ā² − V) trong mask, không chệch do nhiễu. "
+                  "iou_inf_sub = Q + (Q − Q̄_sub)/3, chỉ đúng khi độ chệch ∝ 1/K (kiểm bằng độ ổn định giữa "
+                  "hai mức trên cùng).\n",
+                  "| α | metric | SPI top / prev | IG | mean d | BCa CI | Wilcoxon p | n dương |",
+                  "|---|---|---|---|---|---|---|---|"]
+        for metric in ("energy_deb", "energy_raw", "iou_inf_sub"):
+            for r in rows:
+                d, a, b = _pair(etab, r["spec"], r["top"], ig, ig_top, metric, images)
+                ap = etab.values(r["spec"], r["prev"], metric, images)
+                if not len(d):
+                    continue
+                lo, hi = bca_ci(d, conf, n_boot, seed)
+                p = wilcoxon_greater(d)
+                out["alphas"][r["spec"]][f"{metric}_mean_d"] = float(d.mean())
+                out["alphas"][r["spec"]][f"{metric}_ci"] = [lo, hi]
+                lines.append(f"| {r['spec']} | {metric} | {a.mean():.4f} / {np.nanmean(ap):.4f} | {b.mean():.4f} | "
+                             f"{d.mean():+.4f} | [{lo:+.4f}, {hi:+.4f}] | {p:.3g} | {int((d > 0).sum())}/{len(d)} |")
+
     # cùng ngân sách
     ref = canon(gc["budget_ref"])
     lines += [f"\n## Cùng ngân sách (báo cáo riêng, không dùng kết luận population)\n",

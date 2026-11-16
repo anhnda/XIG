@@ -125,6 +125,29 @@ def test_rel_change_debiased():
     assert raw > 0.2 and deb < 0.08, (raw, deb)      # 0.08 ≈ 5 SE của ước lượng ở kích thước này
 
 
+def test_energy_frac_debiased():
+    """Nhiễu MC làm E thô trôi về tỉ lệ diện tích; E khử nhiễu (trừ V từ sub-estimate) thu hồi E thật."""
+    from spi_study.metrics import energy_frac
+    from spi_study.reference import level_var
+    g = torch.Generator().manual_seed(1)
+    H = W = 64
+    mask = torch.zeros(H, W, dtype=torch.bool)
+    mask[:16] = True                                          # 25% diện tích
+    T = torch.zeros(3, H, W, dtype=F64)
+    T[:, :16] = 1.0
+    T[:, 16:] = 0.3                                           # E thật = 1/(1 + 3·0.09) ≈ 0.787
+    true = energy_frac(T, mask)
+    subs = [T + 0.5 * torch.randn(3, H, W, generator=g, dtype=F64) for _ in range(4)]
+    A = torch.stack(subs).mean(0)
+    raw = energy_frac(A, mask)
+    deb = energy_frac(A, mask, var=level_var(subs))
+    assert raw < true - 0.05
+    assert abs(deb - true) < 0.02, (deb, true)
+    valid = torch.ones(H, W, dtype=torch.bool)
+    valid[15:17] = False
+    assert abs(energy_frac(T, mask, valid) - true) < 0.02
+
+
 def test_power_table():
     # bảng 6.5: SD_d 0.08/0.10/0.12/0.15 → 30/47/68/106 (protocol làm tròn; ceil có thể +1)
     for sd, n in [(0.08, 30), (0.10, 47), (0.12, 68), (0.15, 106)]:

@@ -85,10 +85,22 @@ def run_collapse(st: Setting) -> dict:
     ig = canon(cfg["gate1"]["ig_ref"])
     alphas = [int(a) for a in cc["alphas"]]
     eval_alphas = set(int(a) for a in cc["eval_alphas"])
-    out = {"alphas": {}, "s_eps": {}}
+    qmetric = cc.get("q_metric", "iou")
+    etab = Table(st.store.rows("energy"))
+    if qmetric in ("energy_deb", "energy_raw", "iou_inf_sub"):
+        if not etab.t:
+            raise SystemExit("collapse.q_metric cần energy.jsonl: chạy `energy --group stage1b --line` trước")
+        qtab = etab
+    else:
+        qtab = tab
+    iou_tbl = ["\n## IoU (chỉ để đọc: bị nhiễu MC kéo xuống, mức chệch khác nhau giữa các họ)\n",
+               "| h | họ | IoU tham chiếu | IoU ngoại suy trong mức (Q + (Q − Q̄_sub)/3) |", "|---|---|---|---|"]
+    out = {"alphas": {}, "s_eps": {}, "q_metric": qmetric}
     lines = [f"# Data collapse — {st.tag} — {len(images)} ảnh\n",
              ("Chuẩn L2 khử nhiễu: ‖ΔA‖² − V_f − V_g (V từ sub-estimate). Ảnh có mẫu số không vượt 2·SE của "
-              "chính nó bị loại khỏi CI_fg (NaN).\n") if debias else "Chuẩn L2 thô (chưa khử nhiễu).\n"]
+              "chính nó bị loại khỏi CI_fg (NaN).\n") if debias else "Chuẩn L2 thô (chưa khử nhiễu).\n",
+             f"Q = `{qmetric}`" + (" (tỉ lệ năng lượng Σ(Ā² − V) trong mask, không chệch do nhiễu MC).\n"
+                                   if qmetric == "energy_deb" else ".\n")]
     tbl = ["| h | cặp | trung vị CI_fg | trung vị ‖ΔA‖/‖A_IG‖ | Q_f | Q_g | ΔQ | SE | CI 95% ΔQ | thu gọn | tách |",
            "|---|---|---|---|---|---|---|---|---|---|---|"]
     verdict_collapse_all, verdict_split_any = True, False
@@ -115,12 +127,16 @@ def run_collapse(st: Setting) -> dict:
                 num_ = max(0.0, num_sq) ** 0.5
                 pair_ci[(f, g)].append(num_ / den if ok_den else float("nan"))
                 pair_rel[(f, g)].append(num_ / nig if nig > 0 else float("nan"))
-        Q = {}
+        Q, rec_iou = {}, {}
         for f in FAMS:
             spec = specs[f]
             L = 0 if f == "line" else rc.level(spec)
-            Q[f] = tab.values(spec, L, "iou", images)
-        rec = {"h": float(h), "specs": specs, "pairs": {}}
+            Q[f] = qtab.values(spec, L, qmetric, images)
+            rec_iou[f] = {"iou": float(np.nanmean(tab.values(spec, L, "iou", images))),
+                          "iou_inf_sub": float(np.nanmean(etab.values(spec, L, "iou_inf_sub", images)))
+                          if etab.t else float("nan")}
+            iou_tbl.append(f"| 1/{a + 1} | {f} | {rec_iou[f]['iou']:.4f} | {rec_iou[f]['iou_inf_sub']:.4f} |")
+        rec = {"h": float(h), "specs": specs, "pairs": {}, "iou": rec_iou}
         for (f, g) in pair_ci:
             med_ci = float(np.nanmedian(pair_ci[(f, g)]))
             med_rel = float(np.nanmedian(pair_rel[(f, g)]))
@@ -176,7 +192,7 @@ def run_collapse(st: Setting) -> dict:
         sl.append(f"| 1/{a + 1} | {vals['beta']:.4f} | {vals['mix']:.4f} | {vals['line']:.4f} | {vals['ig']:.4f} |")
 
     lines.insert(1, f"## Kết luận: **{verdict}**\n\n{msg}\n")
-    lines += ["## Chỉ số thu gọn và chất lượng (IoU)\n"] + tbl + sl
+    lines += [f"## Chỉ số thu gọn và chất lượng (Q = {qmetric})\n"] + tbl + iou_tbl + sl
     lines.append("\nTham chiếu: mức cao nhất đã đủ của từng spec; LINE từ tham chiếu IG và SPI(1).")
     text = "\n".join(lines) + "\n"
     path = st.store.write_report("collapse", text, out)
