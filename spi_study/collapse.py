@@ -86,6 +86,8 @@ def run_collapse(st: Setting) -> dict:
     ig = canon(cfg["gate1"]["ig_ref"])
     alphas = [int(a) for a in cc["alphas"]]
     eval_alphas = set(int(a) for a in cc["eval_alphas"])
+    trans_alphas = set(int(a) for a in cc.get("transition_alphas", []))
+    tr_collapse_all, tr_split_any = True, False
     qmetric = cc.get("q_metric", "iou")
     etab = Table(st.store.rows("energy"))
     if qmetric in ("energy_deb", "energy_raw", "iou_inf_sub"):
@@ -151,10 +153,15 @@ def run_collapse(st: Setting) -> dict:
             if a in eval_alphas:
                 verdict_collapse_all &= bool(col)
                 verdict_split_any |= bool(spl)
+            if a in trans_alphas:
+                tr_collapse_all &= bool(col)
+                tr_split_any |= bool(spl)
             rec["pairs"][f"{f}-{g}"] = {"median_ci": med_ci, "median_rel_ig": med_rel, "Q_f": float(np.nanmean(Q[f])),
                                         "Q_g": float(np.nanmean(Q[g])), "dQ": mdq, "se": se, "ci95": [lo, hi],
-                                        "collapse": bool(col), "split": bool(spl), "evaluated": a in eval_alphas}
-            tbl.append(f"| 1/{a + 1}{'' if a in eval_alphas else ' (không xét)'} | {f}–{g} | {med_ci:.3f} | "
+                                        "collapse": bool(col), "split": bool(spl), "evaluated": a in eval_alphas,
+                                        "transition": a in trans_alphas}
+            tag = '' if a in eval_alphas else (' (chuyển tiếp)' if a in trans_alphas else ' (không xét)')
+            tbl.append(f"| 1/{a + 1}{tag} | {f}–{g} | {med_ci:.3f} | "
                        f"{med_rel:.4f} | {np.nanmean(Q[f]):.4f} | {np.nanmean(Q[g]):.4f} | {mdq:+.4f} | {se:.4f} | "
                        f"[{lo:+.4f}, {hi:+.4f}] | {'✓' if col else '✗'} | {'✓' if spl else '✗'} |")
         rec["median_norm_beta_minus_ig"] = float(np.nanmedian(norms["ref"])) if n_measurable else float("nan")
@@ -174,6 +181,14 @@ def run_collapse(st: Setting) -> dict:
         verdict = "INCONCLUSIVE"
         msg = "Chưa kết luận → tăng ảnh hoặc làm dày lưới h ĐÚNG MỘT LẦN."
     out["verdict"], out["message"] = verdict, msg
+    if trans_alphas:
+        tv = "SPLIT" if tr_split_any else ("COLLAPSE" if tr_collapse_all else "INCONCLUSIVE")
+        out["verdict_transition"] = tv
+        msg_tr = (f"\n\n**Vùng chuyển tiếp** (h = {', '.join(f'1/{a + 1}' for a in sorted(trans_alphas))}; "
+                  f"thêm sau Cửa 1, ngoài lưới chốt ban đầu): **{tv}**. Bình nguyên chất lượng bắt đầu từ h ≈ 1e-2, "
+                  "nên lưới chốt nằm trên bình nguyên; vùng này mới phân biệt được các họ.")
+    else:
+        msg_tr = ""
 
     # S_ε
     se_cfg = cc["s_eps"]
@@ -192,7 +207,7 @@ def run_collapse(st: Setting) -> dict:
         out["s_eps"][str(a)] = vals
         sl.append(f"| 1/{a + 1} | {vals['beta']:.4f} | {vals['mix']:.4f} | {vals['line']:.4f} | {vals['ig']:.4f} |")
 
-    lines.insert(1, f"## Kết luận: **{verdict}**\n\n{msg}\n")
+    lines.insert(1, f"## Kết luận (lưới chốt): **{verdict}**\n\n{msg}{msg_tr}\n")
     lines += [f"## Chỉ số thu gọn và chất lượng (Q = {qmetric})\n"] + tbl + iou_tbl + sl
     lines.append("\nTham chiếu: mức cao nhất đã đủ của từng spec; LINE từ tham chiếu IG và SPI(1).")
     text = "\n".join(lines) + "\n"

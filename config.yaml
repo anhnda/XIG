@@ -89,10 +89,14 @@ groups:
       - {spec: "spi_dp:alpha=10,node=rand", ladder: spi}
       - {spec: "spi_dp:alpha=30,node=rand", ladder: spi}
       - {spec: "spi_dp:alpha=100,node=rand", ladder: spi}
+      - {spec: "spi_dp:alpha=1000,node=rand", ladder: spi}       # vùng chuyển tiếp (dùng lại explore_alpha)
+      - {spec: "spi_dp:alpha=10000,node=rand", ladder: spi}
       - {spec: "coord_mix:lam=1/4,node=rand", ladder: spi}
       - {spec: "coord_mix:lam=1/11,node=rand", ladder: spi}
       - {spec: "coord_mix:lam=1/31,node=rand", ladder: spi}
       - {spec: "coord_mix:lam=1/101,node=rand", ladder: spi}
+      - {spec: "coord_mix:lam=1/1001,node=rand", ladder: spi}    # vùng chuyển tiếp
+      - {spec: "coord_mix:lam=1/10001,node=rand", ladder: spi}
   stage2:                    # Pet, lớp đích = nhãn thật, mỗi seed một thư mục
     target: label
     tasks:
@@ -147,8 +151,11 @@ power:                       # SD_d từ kết quả cũ trên 200 ảnh (file: 
   metric: iou
 
 collapse:
-  alphas: [3, 10, 30, 100]   # h = 1/4, 1/11, 1/31, 1/101
-  eval_alphas: [10, 30, 100] # tiêu chí chỉ xét tại các h này
+  alphas: [3, 10, 30, 100, 1000, 10000]   # h = 1/4, 1/11, 1/31, 1/101, 1/1001, 1/10001
+  eval_alphas: [10, 30, 100] # kết luận chốt trước (6.6), giữ nguyên
+  # Thêm sau Cửa 1 + explore_alpha, TRƯỚC khi chạy 1B: E bão hoà từ h ≈ 1e-2 (lưới chốt nằm trên bình nguyên),
+  # vùng chuyển tiếp là h ∈ [1e-4, 1e-3]. Kết luận riêng, cùng tiêu chí.
+  transition_alphas: [1000, 10000]
   alpha_line: 1              # LINE = (1 − s)·IG + s·SPI(1), s = 2h
   ci_collapse: 0.25
   ci_split: 0.5
