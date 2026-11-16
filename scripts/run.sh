@@ -13,6 +13,7 @@
 # Giai đoạn 1A
 #   s1a         attr + converge (tự thêm mức nếu chưa hội tụ) + eval + gate1   → runs/imagenet/gate1.md
 #   s1a_post    tính lại energy + hội tụ + gate1 từ attribution đã có (không GPU)
+#   explore     khám phá α = 1e3, 1e4, 1e5 (ngoài protocol)
 #   s1a_bq      (tuỳ chọn) SPI_BQ 8×24, α ∈ {10, 100}
 # Giai đoạn 1B (chỉ khi gate1 = POSITIVE)
 #   s1b         attr + converge + eval --line + collapse                       → runs/imagenet/collapse.md
@@ -26,7 +27,7 @@
 # env: SEEDS="0 1 2", PET_SEED=0, OUT=runs (ghi đè local.out), EXTRA="--device cuda:1"
 set -euo pipefail
 
-STAGE=${1:?stage: test|test_slow|power|lock|index|smoke|s1a|s1a_post|s1a_bq|s1b|pet_train|pet_index|pet_models|pet_s1a|s2}
+STAGE=${1:?stage: test|test_slow|power|lock|index|smoke|s1a|s1a_post|explore|s1a_bq|s1b|pet_train|pet_index|pet_models|pet_s1a|s2}
 CFG=${2:-config.yaml}
 SEEDS=${SEEDS:-"0 1 2"}
 PET_SEED=${PET_SEED:-0}
@@ -73,6 +74,10 @@ case "$STAGE" in
     $PY energy --group stage1a $OUTARG $EXTRA
     set +e; $PY converge --group stage1a $OUTARG $EXTRA; set -e
     $PY gate1 $OUTARG $EXTRA ;;
+  explore)    # khám phá: SPI α = 1e3, 1e4, 1e5 (bình nguyên hay chuyển tiếp về IG)
+    attr_loop explore_alpha
+    $PY eval --group explore_alpha $OUTARG $EXTRA
+    $PY energy --group explore_alpha $OUTARG $EXTRA ;;
   s1a_bq)
     $PY attr --group stage1a_bq $OUTARG $EXTRA
     $PY eval --group stage1a_bq $OUTARG $EXTRA ;;

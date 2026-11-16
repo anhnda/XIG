@@ -74,6 +74,12 @@ groups:
     tasks:
       - {spec: "spi_bq:alpha=10", levels: [[8, 24]]}
       - {spec: "spi_bq:alpha=100", levels: [[8, 24]]}
+  explore_alpha:             # KHÁM PHÁ (ngoài protocol): bình nguyên α=10..100 có kéo tới α→∞ không (K1)
+    target: predicted
+    tasks:
+      - {spec: "spi_dp:alpha=1000,node=rand", ladder: spi}
+      - {spec: "spi_dp:alpha=10000,node=rand", ladder: spi}
+      - {spec: "spi_dp:alpha=100000,node=rand", ladder: spi}
   stage1b:                   # data collapse; α = 10, 100 dùng lại từ stage1a
     target: predicted
     tasks:
