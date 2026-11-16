@@ -1,196 +1,84 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Protocol "SPI và tích phân gradient trên phân phối trạng thái" (chốt 15/11/2026)
+# attr_probe: đường đi × quy tắc chia credit, bẫy gradient, giữ tín hiệu, sanity check.
 #
-# Mọi khoá NGOÀI mục `local:` được băm vào config.yaml.lock. Thứ tự Giai đoạn 0:
-#   1. sửa model.weights (V1/V2) theo báo cáo gốc
-#   2. python -m spi_study power        → ghi n vào data.imagenet.n_images
-#   3. python -m spi_study lock
-# Sau khi khoá, sửa bất kỳ giá trị nào (trừ local:) làm mọi lệnh dừng lại.
-# Viết số thực dạng 0.0001 (PyYAML đọc "1e-4" thành chuỗi).
+# Pilot (--split pilot): không cần khoá. Xác nhận (--split confirm): phải `lock` trước, mọi khoá
+# ngoài `local:` và `debug:` được băm.
+# --debug: ghi đè bằng mục `debug:` (vài ảnh, ít bước), ghi vào <out>_debug.
+# Viết số thực dạng 0.0001; vô cực viết .inf.
 # ─────────────────────────────────────────────────────────────────────────────
 
-seed: 20261115
+seed: 20261116
 
 model:
   arch: resnet50
-  # load_backbone cũ: MODEL=resnet50 (mặc định run_all.sh) → IMAGENET1K_V2; resnet50_v1 → IMAGENET1K_V1.
   weights: IMAGENET1K_V2
-  allow_tf32: false          # tham chiếu float32 thật (A100 mặc định bật TF32 cho conv)
-  grad_batch: 64             # số trạng thái mỗi lần backward
-
-baseline: black              # x'_c = (0 − mean_c)/std_c
+  allow_tf32: false
+  batch: 64                  # số trạng thái mỗi lần forward+backward
 
 data:
-  imagenet:
-    size: 224
-    old_index_seed: 0        # tái tạo 200 ảnh cũ nếu không có runs/seg200.json
-    old_index_size: 200
-    new_index_seed: 1
-    n_images: 50             # chốt theo power analysis
-    reuse_old: false         # true = dùng lại ảnh cũ (ghi rõ là pilot khám phá)
-  pet:
-    size: 224
-    n_test: 50
-    index_seed: 2
+  size: 224
+  index_seed: 7
+  n_pilot: 20                # ảnh cho A, B, C, sanity (pilot)
+  n_confirm: 50              # ảnh cho xác nhận (D), không giao với pilot
+  n_other: 10                # ảnh "khác" để kiểm H có vô hại với hành vi không
 
-estimator:
-  n_sub: 4                   # số sub-estimate độc lập mỗi mức
-  rng: device                # device: sinh ngẫu nhiên trên GPU (nhanh, tái lập trên cùng loại GPU) | cpu
+baseline: black
 
-# Thang (K, N). extend: double = nhân đôi K và N; danh sách = các mức thêm theo thứ tự.
-ladders:
-  ig:     {levels: [[8, 24], [8, 96], [8, 256], [8, 512]],   extend: double}
-  spi:    {levels: [[8, 24], [16, 48], [32, 96], [64, 192]], extend: double}
-  spi_a1: {levels: [[8, 24], [16, 48], [32, 96], [64, 192]], extend: [[128, 192]]}
+# Đường đi. Mọi phương pháp trả về các trạng thái x_0..x_N, f(x_k) và ∂f/∂x tại x_k.
+methods:
+  ig:     {kind: straight, steps: 128}
+  spi10:  {kind: spi, alpha: 10, steps: 64, paths: 32, n_sub: 4}
+  guided: {kind: guided, steps: 128, fraction: 0.25, max_dist: 0.02}
+  blur:   {kind: blur, steps: 100, max_sigma: 50.0}
 
-convergence:
-  # debiased: ‖Ā_top − Ā_prev‖² − V_top − V_prev (V = phương sai MC theo phần tử từ 4 sub-estimate).
-  # raw: đúng 6.3. Smoke 2 ảnh: SPI raw 0.38–0.85 nhưng toàn bộ là nhiễu (khử nhiễu 0.00–0.04).
-  mode: debiased
-  block: 28                  # khối để tính SE của bản khử nhiễu (chỉ báo cáo)
-  rel_l2: 0.05               # trung vị qua ảnh của rel L2 (theo mode)
-  # q_metric: energy_deb = |trung bình có dấu ΔE| ≤ q_tol, E = tỉ lệ năng lượng Σ(Ā² − V) trong mask.
-  # iou = đúng 6.3 (trung bình |ΔIoU| ≤ iou). Cửa 1 (50 ảnh): IoU của SPI còn trôi +0.008/mức ở 128 đường
-  # vì nhiễu MC kéo IoU xuống; E khử nhiễu ổn định ≤ 0.003 từ mức 1.
-  q_metric: energy_deb
-  q_tol: 0.005
-  iou: 0.005                 # trung bình |IoU_top − IoU_prev| (khi q_metric: iou)
-  max_extra_levels: 0        # 1A đã dùng 1 mức mở rộng; 1B: L2 khử nhiễu hội tụ ở thang gốc
-
-# Spec: tên:k=v,… ; node=rand là luật nút không chệch (xem README, mục "Lệch khỏi protocol").
-groups:
-  stage1a:                   # Cửa 1
-    target: predicted
-    tasks:
-      - {spec: "ig_mid:N=24"}
-      - {spec: "ig_mid:N=192"}
-      - {spec: "ig_shift", ladder: ig}
-      - {spec: "spi_dp:alpha=10,node=rand", ladder: spi}
-      - {spec: "spi_dp:alpha=100,node=rand", ladder: spi}
-      - {spec: "spi_dp:alpha=10,node=mid", levels: [[8, 24]]}     # đúng 6.2, chỉ để so cùng ngân sách
-      - {spec: "spi_dp:alpha=100,node=mid", levels: [[8, 24]]}
-  stage1a_bq:                # tuỳ chọn, chậm (scipy CPU); phải qua test U2/U4 trước
-    target: predicted
-    tasks:
-      - {spec: "spi_bq:alpha=10", levels: [[8, 24]]}
-      - {spec: "spi_bq:alpha=100", levels: [[8, 24]]}
-  explore_alpha:             # KHÁM PHÁ (ngoài protocol): bình nguyên α=10..100 có kéo tới α→∞ không (K1)
-    target: predicted
-    tasks:
-      - {spec: "spi_dp:alpha=1000,node=rand", ladder: spi}
-      - {spec: "spi_dp:alpha=10000,node=rand", ladder: spi}
-      - {spec: "spi_dp:alpha=100000,node=rand", ladder: spi}
-  stage1b:                   # data collapse; α = 10, 100 dùng lại từ stage1a
-    target: predicted
-    tasks:
-      - {spec: "ig_shift", ladder: ig}
-      - {spec: "spi_dp:alpha=1,node=rand", ladder: spi_a1}
-      - {spec: "spi_dp:alpha=3,node=rand", ladder: spi}
-      - {spec: "spi_dp:alpha=10,node=rand", ladder: spi}
-      - {spec: "spi_dp:alpha=30,node=rand", ladder: spi}
-      - {spec: "spi_dp:alpha=100,node=rand", ladder: spi}
-      - {spec: "spi_dp:alpha=1000,node=rand", ladder: spi}       # vùng chuyển tiếp (dùng lại explore_alpha)
-      - {spec: "spi_dp:alpha=10000,node=rand", ladder: spi}
-      - {spec: "coord_mix:lam=1/4,node=rand", ladder: spi}
-      - {spec: "coord_mix:lam=1/11,node=rand", ladder: spi}
-      - {spec: "coord_mix:lam=1/31,node=rand", ladder: spi}
-      - {spec: "coord_mix:lam=1/101,node=rand", ladder: spi}
-      - {spec: "coord_mix:lam=1/1001,node=rand", ladder: spi}    # vùng chuyển tiếp
-      - {spec: "coord_mix:lam=1/10001,node=rand", ladder: spi}
-  stage2:                    # Pet, lớp đích = nhãn thật, mỗi seed một thư mục
-    target: label
-    tasks:
-      - {spec: "ig_shift", ladder: ig}
-      - {spec: "spi_dp:alpha=1,node=rand", ladder: spi_a1}
-      - {spec: "spi_dp:alpha=3,node=rand", ladder: spi}
-      - {spec: "spi_dp:alpha=10,node=rand", ladder: spi}
-      - {spec: "spi_dp:alpha=30,node=rand", ladder: spi}
-      - {spec: "spi_dp:alpha=100,node=rand", ladder: spi}
-      - {spec: "coord_mix:lam=1/4,node=rand", ladder: spi}
-      - {spec: "coord_mix:lam=1/11,node=rand", ladder: spi}
-      - {spec: "coord_mix:lam=1/31,node=rand", ladder: spi}
-      - {spec: "coord_mix:lam=1/101,node=rand", ladder: spi}
+# Quy tắc chia credit trên CÙNG các trạng thái:
+#   canonical: Σ_k g_k ⊙ (x_{k+1} − x_k)              (Riemann trái)
+#   idgi:      Σ_k g_k²/‖g_k‖² · (f(x_{k+1}) − f(x_k))  (Yang et al., CVPR 2023)
+rules: [canonical, idgi]
 
 metrics:
-  on_subs: true              # metric trên từng sub-estimate (sai số chuẩn) ngoài tham chiếu
-  insdel:                    # = experiments.run cũ: insdelp_* (xác suất softmax, không chuẩn hoá)
-    bases: [blur]
-    n_steps: 100
-    batch: 16
-    blur_kernel: 31
-    blur_sigma: 10.0
-  road:
-    enabled: true
-    fracs: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    iters: 200
-    noise: 0.01
+  topk_frac: 0.05
+  insdel: {bases: [blur, black], n_steps: 50, batch: 26, blur_kernel: 31, blur_sigma: 10.0}
+  road: {enabled: true, fracs: [0.1, 0.3, 0.5, 0.7, 0.9], iters: 200, noise: 0.01}
 
-gate1:
-  ig_ref: ig_shift
-  spi: ["spi_dp:alpha=10,node=rand", "spi_dp:alpha=100,node=rand"]
-  min_mean_d: 0.045          # (i): giữ ≥ 50% khoảng cách gốc 0.090
-  delta: 0.045               # hiệu ứng cho power
-  power: 0.8
-  conf: 0.975                # BCa, Bonferroni cho 2 α
-  n_boot: 10000
-  boot_seed: 0
-  secondary: [insdelp_blur, road]
-  budget_ref: "ig_mid:N=192"
-  budget:                    # bảng cùng ngân sách: mức 0 của mỗi spec
-    - "ig_mid:N=24"
-    - "ig_mid:N=192"
-    - "ig_shift"
-    - "spi_dp:alpha=10,node=rand"
-    - "spi_dp:alpha=100,node=rand"
-    - "spi_dp:alpha=10,node=mid"
-    - "spi_dp:alpha=100,node=mid"
+exp_a:
+  n_images: 20
 
-power:                       # SD_d từ kết quả cũ trên 200 ảnh (file: local.old_jsonl)
-  spi_method: "spi:alpha=10,K=8,est=mid"
-  ig_method: "ig:N=24,est=mid"
-  metric: iou
+exp_b:
+  n_images: 6
+  shapes: [line, bent]       # line: quanh đường IG (đối chứng dương); bent: đường cong không phương pháp nào đi theo
+  rho: [0.01, 0.03, 0.1, 0.3, .inf]    # độ rộng ống r = rho·‖Δx‖; SPI α=10 dự đoán chuyển tiếp ở ρ ≈ 0.03–0.3
+  u: [high, low]             # tần số không gian của hướng bẫy
+  tau: [1.0]                 # κ chọn sao cho thay đổi IG (giải tích) = tau·‖A_IG(F)‖
+  bend: 0.1                  # độ cong của "bent": c(s) = x′ + sΔx + bend·‖Δx‖·sin(πs)·q
+  low_sigma: 8.0             # σ (pixel) làm mượt u, q kiểu "low"
+  noise_sigma: 0.1           # kiểm vô hại: H tại x + N(0, σ²) (đơn vị chuẩn hoá)
 
-collapse:
-  alphas: [3, 10, 30, 100, 1000, 10000]   # h = 1/4, 1/11, 1/31, 1/101, 1/1001, 1/10001
-  eval_alphas: [10, 30, 100] # kết luận chốt trước (6.6), giữ nguyên
-  # Thêm sau Cửa 1 + explore_alpha, TRƯỚC khi chạy 1B: E bão hoà từ h ≈ 1e-2 (lưới chốt nằm trên bình nguyên),
-  # vùng chuyển tiếp là h ∈ [1e-4, 1e-3]. Kết luận riêng, cùng tiêu chí.
-  transition_alphas: [1000, 10000]
-  alpha_line: 1              # LINE = (1 − s)·IG + s·SPI(1), s = 2h
-  ci_collapse: 0.25
-  ci_split: 0.5
-  dq_floor: 0.01
-  dq_split: 0.02
-  eps: 0.05
-  debias: true               # khử nhiễu MC trong CI_fg (cùng cách với convergence.mode: debiased)
-  q_metric: energy_deb       # Q_f(h); iou = đúng 6.6 (bị nhiễu MC làm chệch khác nhau giữa các họ)
-  s_eps: {N: 256, d: 4000, paths: 25, chunk: 5}
+exp_c:
+  n_images: 10
+  patch: 24                  # cạnh ô vuông R (pixel, mọi kênh)
+  gamma: 0.5                 # tổng đóng góp kỳ vọng của S = ±gamma·|D|
+  inside_min: 0.8            # ô "trong vật": ≥ 80% diện tích thuộc mask
+  outside_max: 0.05          # ô "ngoài vật": ≤ 5%
+  tries: 200
 
-pet:
-  seeds: [0, 1, 2]
-  init: imagenet             # chốt trước: imagenet (tinh chỉnh) | scratch
-  d_min: 1.0                 # chỉ dùng ảnh có |D_m| ≥ d_min ở mọi mô hình
-  train:
-    epochs: 15
-    batch: 64
-    lr: 0.01
-    head_lr_mult: 10.0
-    momentum: 0.9
-    weight_decay: 0.0001
-    num_workers: 8
-    rrc_scale: [0.5, 1.0]
-  faith:
-    alpha: 10
-    fracs: [0.05, 0.1, 0.2, 0.3]
-    n_random: 5
+sanity:
+  n_images: 10
+  cascade: [fc, layer4, layer3, layer2]   # khởi tạo lại tích luỹ từ đầu ra vào trong
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Không băm: đường dẫn và thiết bị của từng máy
+debug:
+  n_images: 2
+  methods:
+    ig:     {steps: 16}
+    spi10:  {steps: 12, paths: 8}
+    guided: {steps: 16}
+    blur:   {steps: 12}
+  exp_b: {rho: [0.01, .inf], u: [high], shapes: [line]}
+  metrics: {insdel: {n_steps: 10}, road: {enabled: false}}
+
 # ─────────────────────────────────────────────────────────────────────────────
 local:
-  out: runs
+  out: runs_probe
   imagenet_mat: gtsegs_ijcv.mat
-  old_index_file: runs/seg200.json       # runs/seg200.json của code cũ (null → tái tạo)
-  old_jsonl: runs/axis_resnet50_black.jsonl            # vd runs/axis_resnet50_black.jsonl của code cũ (cho power)
-  pet_root: data/pet
-  device: cuda               # null → cuda nếu có
+  exclude_index_files: [runs/seg200.json, runs/imagenet/index.json]   # ảnh đã dùng ở các đợt trước
+  device: cuda

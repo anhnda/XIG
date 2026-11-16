@@ -1,7 +1,6 @@
 torch>=2.1
 torchvision>=0.16
 numpy
-scipy>=1.9
 h5py
 pyyaml
 pillow

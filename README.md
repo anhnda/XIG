@@ -1,167 +1,95 @@
-# spi_study — SPI và tích phân gradient trên phân phối trạng thái
+# attr_probe
 
-Code cho protocol chốt ngày 15/11/2026. Viết bằng PyTorch, tham khảo `pathattr/` và
-`experiments/` của code cũ (dữ liệu, insdelp, ROAD, power từ JSONL cũ).
+Bộ code mới, độc lập với `spi_study`, để kiểm giả thuyết:
 
-**Chưa chạy lần nào.** Code được viết và rà soát bằng cách đọc. Lần chạy đầu tiên phải bắt đầu
-bằng `bash scripts/run.sh test`. Sau đó chạy `smoke` trên 2 ảnh trước khi chạy thật.
+> Phương pháp attribution tốt ít phụ thuộc vào các chi tiết tuỳ ý của quá trình giải thích (lịch trình
+> trạng thái, trạng thái trung gian bất thường, cách chia credit), nhưng vẫn nhạy với thay đổi chức năng thật.
 
-## Lệch khỏi protocol (đọc trước)
+Chưa chạy lần nào. Bắt đầu bằng `bash scripts/run.sh test`, sau đó `bash scripts/run.sh debug`.
 
-| # | Protocol | Bộ code | Lý do |
-|---|---|---|---|
-| 1 | 6.2: SPI_DP và COORD_MIX lấy gradient tại trung điểm bước | Mặc định `node=rand`: điểm đánh giá Z_{k−1} + V_k·δ_k, V_k ~ U(0,1) dùng chung cho mọi phần tử trong bước. `node=mid` vẫn có | Trung điểm chệch ở các bước nhảy có kích thước O(1), và độ chệch **không giảm khi N tăng**. Atom của DP và phần tử kiểu Shapley của COORD_MIX luôn nhảy cỡ O(1). Khi đó thang hội tụ "hội tụ" về một giá trị sai, mà đó đúng là thứ Cửa 1 muốn loại. Với U5, COORD_MIX λ=½ cho A₁ ≈ −0.375 thay vì −0.25; SPI_DP α=1 cho ≈ −0.333. U6 (ReLU) cũng sai. `node=rand` không chệch với A_{α,N}, và A_{α,N} → A_α. Test `test_mid_node_is_biased` kiểm đúng độ chệch lý thuyết |
-| 2 | 6.2: SPI_DP 8×24 trong bảng cùng ngân sách | Có cả `node=mid` (đúng báo cáo gốc) và `node=rand` | So trực tiếp với báo cáo gốc |
-| 3 | 6.1: float32 | Tắt thêm TF32 (`model.allow_tf32: false`) | Trên A100, PyTorch mặc định bật TF32 cho conv; khi đó tham chiếu không còn là float32 thật |
-| 4 | 6.3: thang | Mỗi mức đều chia thành 4 sub-estimate, không chỉ mức cao nhất | Cùng chi phí, nhưng mức nào cũng có sai số chuẩn |
-| 5 | 6.6: "SE" trong \|Q_f − Q_g\| < max(2·SE, 0.01) | SE ghép cặp qua ảnh, tức sd(ΔQ)/√n | Protocol không nói rõ dùng SE nào |
-| 6 | Seed theo (ảnh, phương pháp, tham số, mức, b) | Thêm K, N vào khoá hash | Mức được thêm khi mở rộng thang luôn có seed riêng |
-| 7 | 6.3: hội tụ khi ‖A_top − A_prev‖/‖A_top‖ ≤ 0.05 | `convergence.mode: debiased`: √max(0, ‖Ā_top − Ā_prev‖² − V_top − V_prev)/‖Ā_top‖ ≤ 0.05, với V là phương sai Monte Carlo theo phần tử, ước lượng từ 4 sub-estimate. Bản thô, cận trên (+2·SE theo khối 28×28) và nhiễu của mức top đều được báo cáo | Smoke 2 ảnh: SPI có bản thô 0.38–0.85, khớp hoàn toàn với nhiễu dự đoán từ sub-estimate (nhiễu của mức top 0.21–0.42‖A‖). Bản khử nhiễu chỉ còn 0.00–0.04. Bản thô không bao giờ đạt được với ngân sách khả thi (cần khoảng 200× số đường), trong khi thang đã hội tụ về kỳ vọng. Đặt `mode: raw` để quay về đúng 6.3 |
-| 8 | 6.6: CI_fg = ‖A_f − A_g‖/‖A_beta − A_IG‖ | `collapse.debias: true`: tử số và mẫu số đều khử nhiễu theo cùng cách. Ảnh có mẫu số không vượt 2·SE của chính nó bị loại khỏi CI_fg, và số ảnh đo được ghi trong báo cáo | Cùng lý do với dòng 7: nhiễu theo phần tử lấn át khác biệt giữa các họ |
-| 9 | 6.3 (\|ΔIoU\| ≤ 0.005) và 6.6 (Q = IoU) | `convergence.q_metric` và `collapse.q_metric` đặt là `energy_deb`: tỉ lệ năng lượng khử nhiễu trong mask, E = Σ_{mask}Σ_c(Ā² − V) / Σ Σ_c(Ā² − V). Tiêu chí hội tụ là \|trung bình có dấu ΔE\| ≤ 0.005. `max_extra_levels: 0` cho 1B. IoU vẫn báo cáo, kèm `iou_inf_sub` = Q + (Q − Q̄_sub)/3. Gate1 giữ quyết định theo IoU và thêm mục độ nhạy (energy_deb, energy_raw, iou_inf_sub) | Kết quả Cửa 1 trên 50 ảnh: IoU của SPI còn trôi +0.008 mỗi mức kể cả ở 128 đường, vì Σ_c\|A\| biến nhiễu thành một lớp nền phủ khắp ảnh. Với α=10 độ chệch không theo 1/K, nên không ngoại suy được. Mức nhiễu lại khác nhau giữa các họ, nên ΔQ theo IoU sẽ đo nhiễu chứ không đo toán tử. E khử nhiễu ổn định trong phạm vi ±0.003 từ mức 1 và cho d = +0.14 (t ≈ 3.5–3.9). Mass có dấu Σ_mask A/D không dùng được: các phần dương và âm triệt tiêu nhau, sd theo ảnh khoảng 2 |
+## Thí nghiệm
 
-Nếu muốn theo đúng 6.2: đổi `node=rand` thành `node=mid` trong `config.yaml` trước khi khoá. Khi đó
-U5 và U6 sẽ không qua, vì các test này kiểm theo đáp án population.
+| | Câu hỏi | Thiết kế |
+|---|---|---|
+| **A** | Cải thiện đến từ **đường đi** hay từ **quy tắc chia credit**? | 4 đường (IG, SPI α=10, Guided IG, BlurIG) × 2 quy tắc (canonical, IDGI) trên **cùng các trạng thái**. Báo cáo chất lượng (E_mask, IoU, insdel blur/đen, ROAD), hiệu ứng quy tắc theo từng đường, hiệu ứng đường theo từng quy tắc, và độ tương đồng giữa mọi cặp bản đồ (không lấy IG làm tâm) |
+| **B** | Phương pháp nào bị một gradient bất thường đã biết kéo lệch? | Cài bẫy H vào hàm mục tiêu: H = 0 dọc một đường cong nhưng ∇H ≠ 0 trên đó. Quét độ rộng ống ρ, tần số không gian của hướng u, và hình dạng (quanh đường IG làm đối chứng dương, hoặc một đường cong mà không phương pháp nào đi theo). Đo R = ‖A(F+H) − A(F)‖/‖A(F)‖ và kiểm H có vô hại với hành vi mô hình không |
+| **C** | Phương pháp có giữ được tín hiệu thật không? | Cài S(x) = w·Σ_{i∈R} x_i với ô R (trong hoặc ngoài vật), dấu ±, tổng đóng góp ±0,5·\|D\|. Đo retention, sai số so với đóng góp đúng, phần lan ra ngoài R, và đúng dấu |
+| **Sanity** | Bản đồ có đổi khi mô hình bị phá không? | Khởi tạo lại tích luỹ fc → layer4 → layer3 → layer2 (theo Adebayo et al.). Spearman, cos, top-k so với bản gốc |
+| **D** | Kết quả có lặp lại không? | Cùng các thí nghiệm trên 50 ảnh mới, config khoá trước (`--split confirm`) |
 
-## Cài đặt
+## Đọc kết quả B và C cho đúng
 
-```bash
-pip install -r requirements.txt
-```
+Tích phân thường (canonical) là **tuyến tính theo hàm**: A(F + H) = A(F) + A(H). Hệ quả:
+- Với IG, SPI và BlurIG theo quy tắc canonical, kết quả của B **không phụ thuộc ResNet**, chỉ phụ thuộc hình học giữa đường đi và bẫy.
+- Với C, retention = 1 theo cấu tạo; sai khác chỉ do rời rạc hoá. Đây là đối chứng kiểm code đúng.
+- Thông tin thật của B và C nằm ở các phương pháp **phụ thuộc mô hình**: Guided IG (cả hai quy tắc) và mọi biến thể IDGI.
 
-Dữ liệu: `gtsegs_ijcv.mat` chứa cả ảnh lẫn mask
-(http://calvin-vision.net/bigstuff/proj-imagenet/data/gtsegs_ijcv.mat). Oxford-IIIT Pet được
-torchvision tự tải vào `local.pet_root`.
+Riêng với SPI ở B có một **dự đoán định lượng**. Bẫy quanh đường IG có độ rộng r = ρ‖Δx‖. Trên đường SPI, ‖w‖² ≈ h·t(1−t)·‖Δx‖², nên phần SPI bị bẫy ảnh hưởng, so với IG, là a(ρ) = 2∫ sin²(πt)·exp(−h t(1−t)/(2ρ²)) dt. Cột "dự đoán" trong báo cáo B đặt cạnh cột "R / thay đổi của IG" để so trực tiếp.
 
-Sửa mục `local:` trong `config.yaml`. Mục này không được băm: `imagenet_mat`, `old_index_file`
-(`runs/seg200.json` cũ, nếu có), `old_jsonl` (ví dụ `runs/axis_resnet50_black.jsonl` cũ).
+## Các lựa chọn thiết kế
+
+- **Cùng trạng thái cho hai quy tắc.** Mỗi đường trả về x_0..x_N, f(x_k) và g_k = ∂f/∂x tại x_k. Từ đó tính:
+  - canonical = Σ g_k ⊙ (x_{k+1} − x_k)
+  - idgi = Σ g_k²/‖g_k‖² · (f(x_{k+1}) − f(x_k))
+
+  Như vậy hiệu ứng của quy tắc tách được khỏi hiệu ứng của đường. Riemann trái có chệch ở các bước nhảy của SPI; báo cáo A có cột residual.
+- **Guided IG** cài lại theo thuật toán tham chiếu của thư viện PAIR `saliency`: 128 bước, fraction 0,25, max_dist 0,02, phân vị tính trên mọi phần tử.
+- **BlurIG** dùng điểm đầu là ảnh mờ σ = 50, không ép về ảnh đen. Completeness tính theo f(x) − f(blur(x)).
+- **Bẫy định nghĩa trong không gian ảnh**, với u ⟂ Δx. Không phải chia cho Δx (pixel đen có Δx = 0), nên áp được cho mọi đường, kể cả BlurIG và Guided IG. Với κ = 2τ‖A_IG‖/‖u⊙Δx‖, thay đổi của IG đúng bằng τ‖A_IG‖. Cột `ig_formula_err` kiểm điều này.
+- **Common random numbers.** Đường SPI dùng cùng seed cho F, F + H, F + S và mô hình bị phá, nên hiệu giữa chúng gần như không mang nhiễu MC. Phần còn lại được khử bằng phương sai của hiệu các sub-estimate ghép cặp.
+- **Khử nhiễu.** Mọi đại lượng bậc hai của SPI (E_mask, năng lượng, cos, R) đều trừ phương sai MC theo phần tử.
+- **Ảnh.** Loại 200 ảnh của báo cáo gốc và 50 ảnh của đợt Cửa 1/1B (`local.exclude_index_files`). Phần còn lại chia thành pilot (20), confirm (50) và other (10, dùng để kiểm H vô hại).
 
 ## Chạy
 
 ```bash
-# Giai đoạn 0
-bash scripts/run.sh test          # U1–U9 + test đường ống, CPU, vài phút. Phải đạt hết.
-bash scripts/run.sh test_slow     # thêm U4 phân biệt 251/720 vs 252/720
-#  → sửa model.weights (V1/V2) theo báo cáo gốc
-bash scripts/run.sh power         # → runs/imagenet/power.md; ghi n vào data.imagenet.n_images
-bash scripts/run.sh lock          # khoá config.yaml → config.yaml.lock
-bash scripts/run.sh index         # n ảnh mới, không thuộc 200 ảnh cũ → runs/imagenet/index.json
-bash scripts/run.sh smoke         # 2 ảnh, ghi vào runs_smoke/: kiểm residual, thời gian, bộ nhớ
-
-# Giai đoạn 1A — Cửa 1
-bash scripts/run.sh s1a           # → runs/imagenet/convergence_stage1a.md, gate1.md
-bash scripts/run.sh s1a_bq        # tuỳ chọn, chậm
-
-# Giai đoạn 1B — chỉ khi gate1 = POSITIVE
-bash scripts/run.sh s1b           # → runs/imagenet/convergence_stage1b.md, collapse.md
-
-# Pet
-bash scripts/run.sh pet_train     # SEEDS="0 1 2"
-bash scripts/run.sh pet_index
-bash scripts/run.sh pet_models    # → runs/pet/models.md
-PET_SEED=0 bash scripts/run.sh pet_s1a   # Cửa 1 trên Pet (nếu muốn biết kết quả có chuyển sang Pet không)
-bash scripts/run.sh s2            # Giai đoạn 2 → runs/pet/ensemble.md
+pip install -r requirements.txt
+# sửa local: trong config.yaml (đường dẫn gtsegs_ijcv.mat, các file index cũ)
+bash scripts/run.sh test      # CPU, < 1 phút
+bash scripts/run.sh debug     # 2 ảnh, ít bước, mọi thí nghiệm → runs_probe_debug/pilot/report.md
+bash scripts/run.sh info      # danh sách ảnh, số eval mỗi biến thể
+bash scripts/run.sh a         # mỗi lệnh in ước tính thời gian trước khi chạy
+bash scripts/run.sh b
+bash scripts/run.sh c
+bash scripts/run.sh sanity
+REASON="..." bash scripts/run.sh lock
+bash scripts/run.sh confirm
 ```
 
-Mọi lệnh đều chạy tiếp được: chạy lại cùng một lệnh sẽ bỏ qua attribution và metric đã có. Biến
-môi trường: `OUT=...` thay `local.out`, `EXTRA="--device cuda:1"`.
+Chạy tiếp được: các ảnh và biến thể đã có trong `*.jsonl` được bỏ qua. Attribution gốc của mỗi ảnh được cache trong `cache/`, dùng chung cho A, B, C và sanity.
 
-Lệnh lẻ: `python -m spi_study --config config.yaml <lệnh> --help`. Các lệnh gồm `lock`, `index`,
-`power`, `attr`, `converge`, `eval`, `gate1`, `collapse`, `pet-train`, `pet-models`, `ensemble`.
+**Ước tính thời gian ở 670 eval/s theo lô** (Guided IG chạy tuần tự, giả định khoảng 40 eval/s): khoảng 6–7 s cho mỗi ảnh mỗi biến thể mô hình.
 
-## Đường đi của Cửa 1 (`s1a`)
+| | Số ảnh | Số biến thể | Thời gian |
+|---|---|---|---|
+| A | 20 | 1 | khoảng 3 phút, cộng metric đầy đủ khoảng 3 phút |
+| B | 6 | 20 bẫy | khoảng 13 phút |
+| C | 10 | 4 | khoảng 5 phút |
+| sanity | 10 | 4 | khoảng 5 phút |
 
-1. `attr --group stage1a`: tính IG_mid (N = 24, 192), các thang IG_shift và SPI_DP (α = 10, 100,
-   `node=rand`), cộng SPI_DP 8×24 với `node=mid`. Mỗi mức gồm 4 sub-estimate. Mỗi sub-estimate lưu
-   một file `.pt` float32 kèm một dòng trong `compute.jsonl` (backward, residual, thời gian, seed).
-2. `converge --extend`: áp tiêu chí 6.3 giữa hai mức cao nhất. Nếu không đạt, thêm một mức
-   (nhân đôi K và N; với α = 1 là 128×192) vào `ladder_ext.json`, trả mã 3. Script khi đó chạy lại
-   `attr`. Mỗi spec được mở rộng tối đa `convergence.max_extra_levels` lần.
-3. `eval`: tính IoU (phá hoà bằng hoán vị cố định theo ảnh), insdelp_blur, ROAD trên tham chiếu của
-   mỗi mức (`b = "mean"`) và trên từng sub-estimate. Kết quả ghi vào `metrics.jsonl`, bảng dạng dài.
-4. `gate1`: tính d_j = IoU(SPI ref) − IoU(IG ref), BCa 97.5% với 10.000 lần bootstrap, ba điều kiện
-   (i)–(iii), Wilcoxon một phía có Holm, power đạt được từ SD_d thật. Quyết định là một trong
-   **POSITIVE / NEGATIVE / UNDERPOWERED**. Báo cáo kèm metric phụ và bảng cùng ngân sách (riêng).
+Tổng pilot khoảng 30 phút. Con số chính xác do lệnh in ra sau khi đo trên máy thật.
 
-Tham chiếu là mức cao nhất đã đủ cho mọi ảnh. Nếu một spec chưa hội tụ sau khi đã mở rộng, gate1
-vẫn chạy nhưng in cảnh báo.
+## Đầu ra (`runs_probe[_debug]/<split>/`)
 
-## Data collapse (`s1b`)
-
-- Ba họ cùng trung bình và phương sai tại mọi t, với h = 1/(α+1):
-  - `spi_dp:alpha=α,node=rand`
-  - `coord_mix:lam=h,node=rand`
-  - `line:s=2h`, tính bằng (1 − s)·A_IG + s·A_SPI(1) từ các tham chiếu, ghép sub-estimate theo b
-- `collapse` báo cáo:
-  - CI_fg(h) và ‖ΔA‖/‖A_IG‖, trung vị qua ảnh
-  - Q_f(h) = IoU, ΔQ kèm SE và CI 95%
-  - S_ε (ε = 0.05) tính Monte Carlo từ chính sampler
-  - Kết luận **COLLAPSE / SPLIT / INCONCLUSIVE**, theo tiêu chí 6.6 tại h ∈ {1/11, 1/31, 1/101}
-
-## Giai đoạn 2 (Pet)
-
-- `pet-train`: ResNet-18, chỉ khác seed.
-  - `pet.init: imagenet` (mặc định): tinh chỉnh từ cùng weights ImageNet. Seed đổi head, thứ tự dữ liệu và augmentation.
-  - `pet.init: scratch`: huấn luyện từ đầu.
-  - Phải chốt một trong hai trước khi khoá.
-- `pet-models`: accuracy, đồng thuận dự đoán theo cặp, ECE và D_m trên 50 ảnh đã chọn.
-- `s2`: chạy thang cho cả ba họ, với lớp đích = nhãn thật. Kết quả của mỗi seed nằm trong `runs/pet_s<m>_label/`.
-  IoU trên trimap loại vùng biên khỏi ứng viên, tử số và mẫu số.
-- `ensemble`:
-  - V_model(h) trên Ã = A/D_m, so với trung bình bỏ-một-mô-hình, đã trừ phương sai estimator (từ sub-estimate)
-  - cosine theo cặp
-  - hai nghiệm tầm thường: cực tiểu tại IG; beta không tốt hơn LINE
-  - phân rã V1
-  - phép thử faithfulness của phần bị loại: xoá theo |R_m|, so với xoá ngẫu nhiên, trên chính m và trên các mô hình khác
-
-Giai đoạn 3 (10 seed, ensemble cục bộ, ViT/Swin) **chưa cài**, vì thiết kế của nó phụ thuộc kết quả
-Cổng 3.
+`a_quality.jsonl`, `a_pairs.jsonl`, `b_traps.jsonl`, `c_signal.jsonl`, `sanity.jsonl`, `report.md`, `run_info.json` (hash config, danh sách ảnh), `cache/`.
 
 ## Cấu trúc
 
 ```
-config.yaml              mọi tham số và ngưỡng; mục local: không băm
-scripts/run.sh           chạy theo giai đoạn
-spi_study/
-  config.py              đọc / khoá / kiểm hash; spec "tên:k=v"
-  seeding.py             seed = hash(bộ khoá); torch.Generator riêng mỗi bộ
-  data.py                gtsegs_ijcv (giống loader cũ), Oxford Pet + trimap, danh sách ảnh mới
-  model.py               ResNet-50/18, TF32, grad_F(Zb) = Δx ⊙ ∂f_c/∂x tại x′ + Zb⊙Δx
-  samplers.py            ig_mid, ig_shift, spi_dp (Dirichlet log-space), spi_bq, coord_mix, line (S_ε)
-  attribute.py           A = Σ grad_F(Z_eval) ⊙ dZ, trung bình K đường; residual
-  reference.py           thang (K, N), sub-estimate, meta theo ảnh, kiểm hội tụ / mở rộng
-  metrics.py             IoU (phá hoà, trimap), insdelp_* và ROAD (copy code cũ)
-  evaluate.py            metric từ attribution đã lưu; LINE(s)
-  stats.py               BCa, Wilcoxon, Holm, power, bảng dài
-  power.py               SD_d từ JSONL cũ → n
-  gate1.py               Cửa 1
-  collapse.py            Giai đoạn 1B
-  pet/train.py           huấn luyện ResNet-18 Pet theo seed
-  pet/ensemble.py        báo cáo mô hình, V_model, V1, faithfulness phần bị loại
-tests/
-  test_toy.py            U1–U9 (+ kiểm độ chệch của node=mid)
-  test_pipeline.py       spec, seed, gamma, ánh xạ đường, IoU, power, Holm, lưu trữ
+probe/config.py       đọc config, chế độ debug, khoá cho bước xác nhận, seed
+probe/data.py         gtsegs_ijcv, chia pilot / confirm / other, loại ảnh đã dùng
+probe/model.py        ResNet-50, f = logit + bẫy + tín hiệu, khởi tạo lại theo tầng
+probe/integrate.py    f và ∂f/∂x tại các trạng thái; quy tắc canonical và IDGI
+probe/paths.py        IG, SPI (Dirichlet log-space), Guided IG, BlurIG
+probe/traps.py        bẫy H, hướng u/q, κ theo τ, dự đoán suy giảm cho SPI, tín hiệu S, chọn ô
+probe/metrics.py      E_mask, năng lượng, IoU, cos khử nhiễu, Spearman, top-k, insdel, ROAD
+probe/experiments.py  A, B, C, sanity, ước tính thời gian
+probe/report.py       report.md
+tests/test_probe.py   test trên CNN ReLU nhỏ: công thức bẫy, completeness, các đường, tín hiệu
 ```
 
-## Lưu trữ (`runs/<setting>/`)
+## Giới hạn đã biết
 
-| File | Nội dung |
-|---|---|
-| `meta/<ảnh>.json`, `meta/<ảnh>_mask.pt` | id, lớp đích, D, f(x), f(x′), nguồn; mask (và valid) |
-| `attr/<ảnh>/<spec>__L<mức>__b<b>.pt` | attribution float32 (3, 224, 224), khoảng 0.6 MB |
-| `compute.jsonl` | mỗi sub-estimate: K, N, paths, n_backward, residual, thời gian, seed |
-| `metrics.jsonl` | image, spec, level, K, N, b (`"mean"` = tham chiếu), n_backward, residual, iou, insp/delp/insdelp_blur, road_morf/lerf/road |
-| `ladder_ext.json` | các mức thang đã thêm |
-| `convergence_<nhóm>.md/.json`, `gate1.md/.json`, `collapse.md/.json` | báo cáo |
-
-## Chi phí và ghi chú thực hành
-
-- Mỗi ảnh ở 1A cần khoảng 40.000 backward. Metric trên mỗi bản đồ tốn khoảng 220 forward
-  (insdel 2×101 + ROAD 18); mỗi ảnh có khoảng 70 bản đồ.
-- SPI_DP với N = 192 cấp phát vài tensor float64 cỡ (192, 3, 224, 224), khoảng 230 MB mỗi cái. Nếu
-  thiếu bộ nhớ, giảm `model.grad_batch`; sampler luôn rút từng đường một.
-- `estimator.rng: device` sinh ngẫu nhiên trên GPU: nhanh, tái lập được trên cùng loại GPU.
-  Đặt `cpu` nếu cần tái lập giữa các máy khác nhau (chậm hơn nhiều ở N lớn).
-- SPI_BQ dùng `scipy.special.betaincinv` trên CPU, mất cỡ 10–60 s mỗi đường trên ảnh. Chỉ dùng khi α ≥ 10.
-- Power trong `power.md` tính từ estimator 8×24 so với IG N = 24, không phải từ tham chiếu
-  population. Gate 1 tính lại power từ SD_d thật.
+- H = 0 tại x′ và x, nhưng H vẫn có thể đổi hành vi mô hình ở nơi khác. Các cột H_noise, H_other chỉ kiểm trên một tập nhỏ đã định trước (x có nhiễu, 10 ảnh khác). Với ρ = ∞, H không còn cục bộ và có thể khác 0 đáng kể trên ảnh khác: đó là bẫy có ý nghĩa chức năng, không phải nhiễu.
+- Không có DiffIG: cần một diffusion model đã huấn luyện.
+- Một mô hình (ResNet-50 V2), một baseline (ảnh đen), một bộ dữ liệu.
