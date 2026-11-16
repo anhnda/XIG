@@ -21,7 +21,12 @@ BOOT = 2000
 def _read(out, name):
     import pandas as pd
     p = os.path.join(out, f"{name}.csv")
-    return pd.read_csv(p) if os.path.exists(p) else None
+    if not os.path.exists(p) or os.path.getsize(p) == 0:
+        return None
+    try:
+        return pd.read_csv(p)
+    except pd.errors.EmptyDataError:          # CSV rỗng (ví dụ không có biến thể nào bị bỏ)
+        return None
 
 
 def fmt(v):
@@ -556,6 +561,9 @@ def answers(V):
 
 
 def write(out: str, cfg: dict) -> str:
+    import warnings
+    warnings.filterwarnings("ignore", message="Mean of empty slice")
+    warnings.filterwarnings("ignore", message="All-NaN slice encountered")
     meta_p = os.path.join(out, "meta.json")
     meta = json.load(open(meta_p)) if os.path.exists(meta_p) else {}
     primary = "canon_rand" if "rand" in cfg["quadrature"] else "canon_left"

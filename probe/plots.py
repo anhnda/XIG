@@ -28,9 +28,8 @@ def _setup():
 
 
 def _read(out, name):
-    import pandas as pd
-    p = os.path.join(out, f"{name}.csv")
-    return pd.read_csv(p) if os.path.exists(p) else None
+    from .report import _read as r
+    return r(out, name)
 
 
 def conv(out, plt):

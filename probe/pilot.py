@@ -698,6 +698,8 @@ def _write_csvs(ctx: Ctx, stage: str, images: list):
         if obj.get("heat") is not None:
             heats[im] = obj["heat"]
     for k, rs in allrows.items():
+        if not rs:                              # không ghi CSV rỗng
+            continue
         pd.DataFrame(rs).to_csv(os.path.join(ctx.out, f"{k}.csv"), index=False)
         print(f"[{stage}] {k}.csv: {len(rs)} dòng")
     if heats:
