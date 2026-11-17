@@ -30,6 +30,8 @@ python -m probe [--config config.yaml] [--debug] [--device cuda] <lệnh>
   ocs-report   OCS_REPORT.md từ CSV đã có
   e10          E10: Random Path Family Ablation (IG, DP, smooth warp, logistic-normal; khớp mức exploration) → E10_REPORT.md
   e10-report   E10_REPORT.md từ CSV đã có
+  e11          E11: LIG chỉ Phase 1 (tối ưu μ) trên mẫu đường SPI và biến thể cho trước → E11_REPORT.md
+  e11-report   E11_REPORT.md từ CSV đã có
 
 Kết quả: <local.out>[_debug]/pilot/. Chạy lại sẽ bỏ qua ảnh đã có trong cache (cùng hash config).
 """
@@ -51,13 +53,22 @@ def main(argv=None) -> None:
                                     "cross-gate", "cross-e4", "cross-e4c", "cross-e4d", "cross-report", "cross", "e5", "e5-report",
                                     "e6", "e6-report", "e7", "e7-report",
                                     "e8", "e8-report", "e9", "e9-report",
-                                    "ocs", "ocs-report", "e10", "e10-report"])
+                                    "ocs", "ocs-report", "e10", "e10-report",
+                                    "e11", "e11-report"])
     args = ap.parse_args(argv)
     cfg = C.load(args.config, debug=args.debug)
 
     if args.cmd == "report":
         from .report import write
         write(C.out_dir(cfg, "pilot"), cfg)
+        return
+    if args.cmd.startswith("e11"):
+        from . import e11 as E11
+        from .e11_report import write as w11
+        if args.cmd == "e11":
+            from .pilot import Ctx
+            E11.run(Ctx(cfg, args.device))
+        w11(E11.e11_out(cfg), cfg)
         return
     if args.cmd.startswith("e10"):
         from . import e10 as E10

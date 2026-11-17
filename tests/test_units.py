@@ -666,3 +666,35 @@ def test_e10_exploration_matching():
     assert abs(cal["D_dp_grid_mc"] / cal["D_target_dp_grid"] - 1) < 0.05                     # Monte Carlo DP khớp giải tích
     assert abs(cal["D_smooth_grid_mc"] / cal["D_smooth_continuous"] - 1) < 0.01              # δ²/30 trên lưới mịn
     assert abs(cal["D_smooth_continuous"] - cal["D_dp_continuous"]) < 1e-12                  # δ = √(5/(α+1)) khớp DP liên tục
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E11: LIG Phase 1
+# ─────────────────────────────────────────────────────────────────────────────
+
+from probe.e11 import legacy_df as lig_legacy_df, make_schedule, optimize_mu_signal_harvesting, project_simplex  # noqa: E402
+
+
+def test_lig_phase1_collapses_when_gap_large():
+    d = torch.tensor([0.1, 0.05, 2.0, 0.3, 0.2])
+    df = torch.tensor([0.1, 0.06, 1.9, 0.3, 0.2])
+    mu = optimize_mu_signal_harvesting(d, df, lam=1.0, tau=0.01, n_iter=300)
+    assert int(mu.argmax()) == 2 and float(mu.max()) > 0.9                     # khoảng cách |d| ≫ τ/λ → dồn về một bước
+    mu2 = optimize_mu_signal_harvesting(d, df, lam=1.0, tau=100.0, n_iter=300)
+    assert float(mu2.max()) < 0.5                                              # τ lớn → μ trải rộng
+
+
+def test_project_simplex_and_legacy_df():
+    v = torch.tensor([3.0, 1.0, 0.2, -1.0], dtype=F64)
+    p = project_simplex(v)
+    assert abs(float(p.sum()) - 1) < 1e-12 and bool((p >= 0).all())
+    f = torch.tensor([0.0, 1.0, 3.0, 6.0], dtype=F64)
+    assert torch.equal(lig_legacy_df(f), torch.tensor([0.0, 1.0, 2.0], dtype=F64))
+
+
+@pytest.mark.parametrize("spec", ["ig", "dp:10", "smooth", "lognormal", "rgb:10", "block4:10"])
+def test_e11_schedules(spec):
+    cal = {"alpha": 10.0, "delta": math.sqrt(5 / 11), "sigma": 0.8}
+    Z = make_schedule(spec, 12, (3, 16, 16), generator(70, "cpu"), torch.Generator().manual_seed(1), cal)
+    assert Z.shape == (13, 3, 16, 16) and torch.all(Z[0] == 0) and torch.allclose(Z[-1], torch.ones_like(Z[-1]))
+    assert bool(((Z[1:] - Z[:-1]) >= -1e-12).all())
