@@ -562,3 +562,18 @@ def test_interactions_additive_vs_product():
     prod = lambda Z: (Z[:, 0] * Z[:, 1]).flatten(1).sum(1)                      # tương tác kênh 0×1 tại cùng pixel
     r, _ = interactions(prod, x0, dx, 2, [0.5], 0.5, 64)
     assert min(d["rgb"] for d in r) > 1e-6 and max(d["far"] for d in r) < 1e-10
+
+
+def test_aw_stream_matches_strat_points():
+    from probe.mechanism import aw, aw_stream, strat_points
+    from probe.quad import fg
+    torch.manual_seed(21)
+    fn = lambda Z: torch.sin(2 * Z).flatten(1).sum(1) * Z[:, :1].flatten(1).sum(1)
+    x0 = torch.zeros(1, 3, 4, 4, dtype=F64)
+    x = torch.rand(1, 3, 4, 4, dtype=F64) + 0.2
+    X = spi_nodes_from(spi_increments(3.0, 9, x.shape[1:], generator(40, "cpu")), x0, x - x0)
+    P, _ = strat_points(X, 5, generator(41, "cpu"))
+    _, G = fg(fn, P, 64)
+    A1, W1 = aw(G, X[1:] - X[:-1], 5, max_points=7)
+    A2, W2 = aw_stream(fn, X, 5, generator(41, "cpu"), 64, max_points=12)
+    assert torch.allclose(A1, A2, atol=1e-12) and torch.allclose(W1, W2, atol=1e-12)

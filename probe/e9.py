@@ -32,7 +32,7 @@ import torch
 from . import config as C
 from .e5 import geom_dist
 from .e7 import group_labels
-from .mechanism import aw, decomp, strat_points, summ
+from .mechanism import aw, aw_stream, decomp, strat_points, summ
 from .metrics import energy_mask, insdel, iou, make_base, tie_perm
 from .model import ProbFn, TargetFn
 from .paths import cum_nodes, spi_increments, straight_nodes
@@ -173,11 +173,8 @@ class Ev:
         return q
 
     def strat(self, X, M, *key):
-        n = X.shape[0] - 1
-        P, _ = strat_points(X, M, self.ctx.gen(*key))
-        _, G = fg(self.fn, P, self.ctx.batch)
-        A, W = aw(G, X[1:] - X[:-1], M)
-        return A, W
+        """Cùng số ngẫu nhiên và cùng điểm với strat_points (tái tạo đúng seed của E8), tính theo khối để vừa VRAM."""
+        return aw_stream(self.fn, X, M, self.ctx.gen(*key), self.ctx.batch)
 
 
 def a_image(ctx: Ctx, idx: int, do_a1: bool, do_h1: bool) -> dict:

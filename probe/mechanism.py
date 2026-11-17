@@ -77,14 +77,44 @@ def grads(fn, P, batch):
     return g
 
 
-def aw(G: torch.Tensor, dX: torch.Tensor, M: int):
-    """G (N·M, …), dX (N, …) -> A, W (bản đồ theo phần tử, float64)."""
+def aw(G: torch.Tensor, dX: torch.Tensor, M: int, max_points: int = 256):
+    """G (N·M, …), dX (N, …) -> A, W (bản đồ theo phần tử, float64). Cộng dồn theo khối đoạn để không nhân đôi bộ nhớ
+    (bản float64 của toàn bộ G có thể vượt VRAM khi N·M lớn)."""
     N = dX.shape[0]
-    Gs = G.view((N, M) + tuple(G.shape[1:])).double()
-    d = dX.double()
-    A = (Gs.sum(1) * d).sum(0) / M
-    W = (Gs.abs().sum(1) * d.abs()).sum(0) / M
-    return A, W
+    Gs = G.view((N, M) + tuple(G.shape[1:]))
+    A = torch.zeros(tuple(G.shape[1:]), dtype=F64, device=G.device)
+    W = torch.zeros_like(A)
+    ck = max(1, max_points // M)
+    for k0 in range(0, N, ck):
+        g = Gs[k0:k0 + ck].double()
+        d = dX[k0:k0 + ck].double()
+        A += (g.sum(1) * d).sum(0)
+        W += (g.abs().sum(1) * d.abs()).sum(0)
+        del g, d
+    return A / M, W / M
+
+
+def aw_stream(fn, X: torch.Tensor, M: int, gen, batch: int, max_points: int = 512):
+    """Như strat_points + fg + aw (cùng các số ngẫu nhiên U, cùng điểm), nhưng sinh điểm và tính gradient theo khối đoạn,
+    không giữ toàn bộ G trong bộ nhớ."""
+    N = X.shape[0] - 1
+    U = torch.rand(N, M, generator=gen, device=gen.device, dtype=F64).to(X.device)
+    s = (torch.arange(M, device=X.device, dtype=F64).view(1, M) + U) / M
+    dX = X[1:] - X[:-1]
+    shp = (-1, M) + (1,) * (X.dim() - 1)
+    A = torch.zeros(tuple(X.shape[1:]), dtype=F64, device=X.device)
+    W = torch.zeros_like(A)
+    ck = max(1, max_points // M)
+    for k0 in range(0, N, ck):
+        k1 = min(N, k0 + ck)
+        P = X[k0:k1].unsqueeze(1) + s[k0:k1].view(shp).to(X.dtype) * dX[k0:k1].unsqueeze(1)
+        _, G = fg(fn, P.reshape((-1,) + tuple(X.shape[1:])), batch)
+        g = G.view((k1 - k0, M) + tuple(X.shape[1:])).double()
+        d = dX[k0:k1].double()
+        A += (g.sum(1) * d).sum(0)
+        W += (g.abs().sum(1) * d.abs()).sum(0)
+        del P, G, g, d
+    return A / M, W / M
 
 
 def nested_pick(N: int, Mmax: int, M: int, gen, device) -> torch.Tensor:
