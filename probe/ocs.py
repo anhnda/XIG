@@ -36,7 +36,6 @@ import torch
 import torch.nn.functional as Fnn
 
 from . import config as C
-from .cross import _corr, _rank, kendall_tau_b
 from .mechanism import aw_stream
 from .metrics import make_base, tie_perm
 from .model import TargetFn
@@ -61,8 +60,34 @@ def ocs_out(cfg: dict) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# bản đồ và các thước đo tương đồng
+# bản đồ và các thước đo tương đồng (tự chứa, không phụ thuộc phiên bản cross.py)
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _rank(v: torch.Tensor) -> torch.Tensor:
+    v = v.flatten().double()
+    r = torch.empty_like(v)
+    r[v.argsort()] = torch.arange(v.numel(), device=v.device, dtype=F64)
+    return r
+
+
+def _corr(a, b):
+    a, b = a - a.mean(), b - b.mean()
+    d = a.norm() * b.norm()
+    return float((a * b).sum() / d) if float(d) > 0 else float("nan")
+
+
+def kendall_tau_b(a: torch.Tensor, b: torch.Tensor, chunk: int = 1024) -> float:
+    a, b = a.flatten().double(), b.flatten().double()
+    n = a.numel()
+    s = na = nb = 0.0
+    for i in range(0, n, chunk):
+        da = torch.sign(a[i:i + chunk, None] - a[None])
+        db = torch.sign(b[i:i + chunk, None] - b[None])
+        s += float((da * db).sum())
+        na += float((da != 0).sum())
+        nb += float((db != 0).sum())
+    return s / (na * nb) ** 0.5 if na > 0 and nb > 0 else float("nan")
+
 
 class Map:
     def __init__(self, A: torch.Tensor | None = None, pix_abs=None, signed=True):
