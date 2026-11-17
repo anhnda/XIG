@@ -522,3 +522,43 @@ def test_holm_and_verdicts():
     assert t.loc["G", "verdict"] == "NGƯỢC DỰ ĐOÁN"
     assert t.loc["E", "verdict"].startswith("TƯƠNG ĐƯƠNG")
     assert t.loc["X", "verdict"].startswith("KHÁC")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E9: tích phân theo s, ghép kênh q, tương tác hữu hạn sai phân
+# ─────────────────────────────────────────────────────────────────────────────
+
+from probe.e9 import ig_uniform_points, interactions, q_schedule, s_uniform_points  # noqa: E402
+
+
+def test_s_uniform_matches_ig_points():
+    x0 = torch.zeros(1, 3, 8, 8, dtype=F64)
+    dx = torch.rand(1, 3, 8, 8, dtype=F64) + 0.1
+    Zs = cum_nodes(spi_increments(2.0, 16, (1,), generator(30, "cpu")))[:, 0]
+    Pg, s_hat, s, _ = s_uniform_points(Zs, x0, dx, 50, generator(31, "cpu"))
+    Pi, si = ig_uniform_points(x0, dx, 50, generator(31, "cpu"))
+    assert float((s_hat - s).abs().max()) < 1e-12 and torch.allclose(Pg, Pi, atol=1e-12)
+
+
+def test_q_schedule_endpoints_and_marginals():
+    Zi = cum_nodes(spi_increments(3.0, 8, (3, 6, 6), generator(32, "cpu")))
+    Zp = cum_nodes(spi_increments(3.0, 8, (1, 6, 6), generator(33, "cpu")))
+    U = torch.rand(6, 6, generator=generator(34, "cpu"), dtype=F64)
+    Z0, s0 = q_schedule(Zi, Zp, U, 0.0)
+    Z1, s1 = q_schedule(Zi, Zp, U, 1.0)
+    assert torch.equal(Z0, Zi) and torch.equal(Z1, Zp.expand_as(Zi)) and not s0.any() and s1.all()
+    Zh, sh = q_schedule(Zi, Zp, U, 0.5)
+    assert torch.equal(Zh[:, :, sh], Zp.expand_as(Zi)[:, :, sh]) and torch.equal(Zh[:, :, ~sh], Zi[:, :, ~sh])
+    Z25, s25 = q_schedule(Zi, Zp, U, 0.25)
+    assert bool((s25 <= sh).all())                                             # ghép đơn điệu theo q
+
+
+def test_interactions_additive_vs_product():
+    x0 = torch.zeros(1, 3, 8, 8, dtype=F64)
+    dx = torch.rand(1, 3, 8, 8, dtype=F64) + 0.5
+    add = lambda Z: (Z ** 2).flatten(1).sum(1)                                  # cộng tính theo phần tử → I = 0
+    r, _ = interactions(add, x0, dx, 2, [0.5], 0.5, 64)
+    assert max(max(d["rgb"], d["far"]) for d in r) < 1e-10
+    prod = lambda Z: (Z[:, 0] * Z[:, 1]).flatten(1).sum(1)                      # tương tác kênh 0×1 tại cùng pixel
+    r, _ = interactions(prod, x0, dx, 2, [0.5], 0.5, 64)
+    assert min(d["rgb"] for d in r) > 1e-6 and max(d["far"] for d in r) < 1e-10

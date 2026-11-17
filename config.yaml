@@ -186,7 +186,16 @@ e8:
     - {id: H5, a: global, b: ig, metrics: [iou, insdel_blur, insdel_black], test: equivalence, margin: 0.01}
   secondary_guided: {enabled: true, N: 128, M: 8, donors: 2}
 
+# E9: cơ chế (hash riêng; dùng lại seed và realization của E8 cho A1/A2 nên phụ thuộc mục e8)
+e9:
+  A: {split: confirm, n_images: 6, K: 4, M: [16, 64], ref_N: 256, ref_M: 16}   # A1: bất biến global ≡ IG
+  H1: {n_images: 8, M: 4}                                                         # A2: rgb − indep ở N_fine của E8
+  B: {split: pilot, n_images: 16, alpha: 10, N: 64, M: 4, K: 8, q: [0, 0.25, 0.5, 0.75, 1], per_path_insdel: true,
+      interaction: {grid: 8, t: [0.25, 0.5, 0.75], step: 0.5}}
+
 debug:
+  e9: {A: {split: pilot, n_images: 1, K: 1, M: [4], ref_N: 32, ref_M: 4}, H1: {n_images: 1},
+       B: {n_images: 1, N: 8, M: 2, K: 2, q: [0, 0.5, 1], per_path_insdel: false, interaction: {grid: 4, t: [0.5]}}}
   e8: {split: pilot, n_images: 2, N: 8, N_fine: 32, M: 2, K: 2, kinds: [indep, rgb, rand16, block4, global],
        gate: {n_images: 1, kinds: [block4, rand16], M: 2}, stats: {bootstrap: 200},
        hypotheses: [{id: H1, a: rgb, b: indep, metrics: [iou, insdel_blur], test: two_sided, family: primary},
