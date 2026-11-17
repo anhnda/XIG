@@ -21,6 +21,8 @@ python -m probe [--config config.yaml] [--debug] [--device cuda] <lệnh>
   e6-report    E6_REPORT.md + đồ thị từ CSV đã có
   e7           E7: nhóm đồng bộ cùng cỡ (block vs random), độ bền theo N, Guided ở cầu phương dày → E7_REPORT.md
   e7-report    E7_REPORT.md + đồ thị từ CSV đã có
+  e8           E8: xác nhận held-out các phép so đã tiền đăng ký (split confirm, 50 ảnh) → E8_REPORT.md
+  e8-report    E8_REPORT.md + đồ thị từ CSV đã có
 
 Kết quả: <local.out>[_debug]/pilot/. Chạy lại sẽ bỏ qua ảnh đã có trong cache (cùng hash config).
 """
@@ -40,13 +42,22 @@ def main(argv=None) -> None:
     ap.add_argument("cmd", choices=["estimate", "conv", "main", "report", "all",
                                     "mech-e1", "mech-e23", "mech-report", "mech",
                                     "cross-gate", "cross-e4", "cross-e4c", "cross-report", "cross", "e5", "e5-report",
-                                    "e6", "e6-report", "e7", "e7-report"])
+                                    "e6", "e6-report", "e7", "e7-report",
+                                    "e8", "e8-report"])
     args = ap.parse_args(argv)
     cfg = C.load(args.config, debug=args.debug)
 
     if args.cmd == "report":
         from .report import write
         write(C.out_dir(cfg, "pilot"), cfg)
+        return
+    if args.cmd.startswith("e8"):
+        from . import e8 as E8
+        from .e8_report import write as w8
+        if args.cmd == "e8":
+            from .pilot import Ctx
+            E8.run(Ctx(cfg, args.device))
+        w8(E8.e8_out(cfg), cfg)
         return
     if args.cmd.startswith("e7"):
         from . import e7 as E7

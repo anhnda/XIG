@@ -19,10 +19,12 @@
 #   e6         E6 → runs_probe/e6_<split>/E6_REPORT.md ;  e6-report: dựng lại báo cáo (DEBUG=1 cho thư mục debug)
 #   e7-debug   E7 ở chế độ debug → runs_probe_debug/e7/E7_REPORT.md
 #   e7         E7 → runs_probe/e7/E7_REPORT.md ;  e7-report: dựng lại báo cáo (DEBUG=1 cho thư mục debug)
+#   e8-debug   E8 ở chế độ debug (2 ảnh PILOT, không đụng held-out) → runs_probe_debug/e8_pilot/E8_REPORT.md
+#   e8         E8 xác nhận held-out → runs_probe/e8_confirm/E8_REPORT.md ;  e8-report: dựng lại (DEBUG=1 cho debug)
 # env: CFG=config.yaml, EXTRA="--device cuda:1"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report|mech-debug|mech|mech-e1|mech-e23|mech-report|cross-debug|cross|cross-gate|cross-e4|cross-e4c|cross-report|e5-debug|e5|e5-report|e6-debug|e6|e6-report|e7-debug|e7|e7-report}
+STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report|mech-debug|mech|mech-e1|mech-e23|mech-report|cross-debug|cross|cross-gate|cross-e4|cross-e4c|cross-report|e5-debug|e5|e5-report|e6-debug|e6|e6-report|e7-debug|e7|e7-report|e8-debug|e8|e8-report}
 CFG=${CFG:-config.yaml}
 EXTRA=${EXTRA:-}
 PY="python -m probe --config $CFG $EXTRA"
@@ -49,5 +51,8 @@ case "$STAGE" in
   e7-debug) $PY --debug e7 ;;
   e7) $PY e7 ;;
   e7-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug e7-report; else $PY e7-report; fi ;;
+  e8-debug) $PY --debug e8 ;;
+  e8) $PY e8 ;;
+  e8-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug e8-report; else $PY e8-report; fi ;;
   *) echo "stage không biết: $STAGE"; exit 1 ;;
 esac

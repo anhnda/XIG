@@ -495,3 +495,30 @@ def test_shared_vs_independent_schedule_counterexample():
     o1 = torch.tensor([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]], dtype=F64).view(3, 2, 1, 1)
     o2 = torch.tensor([[0.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=F64).view(3, 2, 1, 1)
     assert torch.allclose((A_of(o1) + A_of(o2)) / 2, torch.tensor([0.5, 0.5], dtype=F64), atol=2e-3)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E8: Holm, luật phán quyết trên dữ liệu tổng hợp
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_holm_and_verdicts():
+    import numpy as np
+    import pandas as pd
+    from probe.e8_report import analyse, holm
+    assert np.allclose(holm(np.array([0.01, 0.04, 0.03])), [0.03, 0.06, 0.06])
+    rng = np.random.default_rng(0)
+    rows = []
+    for i in range(40):
+        base = rng.normal(0.4, 0.05)
+        for fam, shift in (("a", -0.05), ("b", 0.0), ("c", 0.001)):
+            rows.append({"image": f"i{i}", "family": fam, "iou": base + shift + rng.normal(0, 0.01)})
+    m = pd.DataFrame(rows)
+    hyps = [{"id": "L", "a": "a", "b": "b", "metrics": ["iou"], "test": "less", "family": "primary"},
+            {"id": "G", "a": "a", "b": "b", "metrics": ["iou"], "test": "greater", "family": "primary"},
+            {"id": "E", "a": "c", "b": "b", "metrics": ["iou"], "test": "equivalence", "margin": 0.02},
+            {"id": "X", "a": "a", "b": "b", "metrics": ["iou"], "test": "equivalence", "margin": 0.02}]
+    t = analyse(m, hyps, {"bootstrap": 2000, "alpha": 0.05, "seed": 1}).set_index("ID")
+    assert t.loc["L", "verdict"].startswith("XÁC NHẬN")
+    assert t.loc["G", "verdict"] == "NGƯỢC DỰ ĐOÁN"
+    assert t.loc["E", "verdict"].startswith("TƯƠNG ĐƯƠNG")
+    assert t.loc["X", "verdict"].startswith("KHÁC")

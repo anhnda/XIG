@@ -164,7 +164,36 @@ e7:
   Njump: {n_images: 6, N: 256, M: 2, paths: 2, kinds: [indep, block4, rand16]}
   Q: {n_images: 6, N: 128, M_hi: 16, M_lo: 4, perm_seeds: 4, donors: 2}
 
+# E8: XÁC NHẬN HELD-OUT. Lần chạy đầu ghi e8_prereg.json + E8_PREREG.md; sau đó KHÔNG sửa mục này
+# (và paths / metrics / model / data / seed) — mọi lần chạy sau phải trùng hash, nếu không chương trình dừng.
+e8:
+  split: confirm             # 50 ảnh chưa dùng (không giao pilot, không giao 250 ảnh của các đợt trước)
+  n_images: 50
+  alpha: 10
+  N: 64
+  N_fine: 256                # lịch trình rút ở N_fine rồi cộng gộp xuống N (cùng realization cho cổng số học)
+  M: 4                       # điểm cầu phương phân tầng mỗi đoạn
+  K: 4                       # đường mỗi kiểu nhóm mỗi ảnh; metric từng đường (K = 1), trung bình trong ảnh
+  kinds: [indep, rgb, rand16, block4, block16, rand256, global]
+  gate: {n_images: 12, kinds: [block16, rand256], M: 2}
+  stats: {bootstrap: 10000, alpha: 0.05, seed: 8}
+  global_signed_ratio_max: 1.5   # ‖A_global − A_IG,a‖₁ / ‖A_IG,b − A_IG,a‖₁ (median qua ảnh)
+  hypotheses:
+    - {id: H1, a: rgb, b: indep, metrics: [iou, insdel_blur], test: two_sided, family: primary}
+    - {id: H2, a: rand16, b: rgb, metrics: [iou, insdel_blur, insdel_black], test: equivalence, margin: 0.02}
+    - {id: H3, a: block4, b: rand16, metrics: [insdel_black], test: less, family: primary}
+    - {id: H4, a: block16, b: rand256, metrics: [exposure_ratio, insdel_black], test: two_sided, family: primary}
+    - {id: H5, a: global, b: ig, metrics: [iou, insdel_blur, insdel_black], test: equivalence, margin: 0.01}
+  secondary_guided: {enabled: true, N: 128, M: 8, donors: 2}
+
 debug:
+  e8: {split: pilot, n_images: 2, N: 8, N_fine: 32, M: 2, K: 2, kinds: [indep, rgb, rand16, block4, global],
+       gate: {n_images: 1, kinds: [block4, rand16], M: 2}, stats: {bootstrap: 200},
+       hypotheses: [{id: H1, a: rgb, b: indep, metrics: [iou, insdel_blur], test: two_sided, family: primary},
+                    {id: H2, a: rand16, b: rgb, metrics: [iou], test: equivalence, margin: 0.02},
+                    {id: H3, a: block4, b: rand16, metrics: [insdel_black], test: less, family: primary},
+                    {id: H5, a: global, b: ig, metrics: [iou], test: equivalence, margin: 0.01}],
+       secondary_guided: {N: 16, M: 2, donors: 1}}
   e7: {n_images: 1, S: {N: 8, M: 2, paths: 2, kinds: [indep, rgb, block4, rand16, global]},
        Njump: {n_images: 1, N: 16, M: 2, paths: 1, kinds: [indep, block4]},
        Q: {n_images: 1, N: 16, M_hi: 4, M_lo: 2, perm_seeds: 2, donors: 1}}
