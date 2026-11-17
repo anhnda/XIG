@@ -108,7 +108,7 @@ def alpha_table(a, m):
     im["r_high"] = (im.W_cm_high + im.W_cd_high) / hi_r
     im["S_freq"] = np.log(im.r_low / im.r_high)
     im["S_mask"] = np.log(im.r_in / im.r_out)
-    im["between_frac"] = im.between / im.EW
+    im["between_frac"] = im["between"] / im.EW
     im["within_frac"] = im.within / im.EW
     for q in ("iou", "insdel_blur", "insdel_black"):
         if q in im:
@@ -129,7 +129,7 @@ def plots(out, plt, gate, toy, mt, st, at, ap):
 
     if gate is not None and len(gate):
         gi = gate[gate.level == "image"].copy()
-        gi["between_frac"] = gi.between / gi.EW
+        gi["between_frac"] = gi["between"] / gi.EW
         gi["within_frac"] = gi.within / gi.EW
         fig, ax = plt.subplots(1, 2, figsize=(10, 3.6))
         for im, g in gi[gi.method == "spi10"].groupby("image"):
@@ -247,7 +247,7 @@ def gate_budget(gate):
         bud = ig.L1bar - sp.L1bar
         rows.append({"image": im, "M": M, "budget_÷W_IG": bud / ig.EW,
                      "share_exposure": (ig.EW - sp.EW) / bud, "share_within": (sp.within - ig.within) / bud,
-                     "share_between": sp.between / bud, "between_frac": sp.between / sp.EW,
+                     "share_between": sp["between"] / bud, "between_frac": sp["between"] / sp.EW,
                      "within_frac_spi": sp.within / sp.EW, "within_frac_ig": ig.within / ig.EW,
                      "EL1_spi": sp.EL1, "L1bar_spi": sp.L1bar, "L1_ig": ig.L1bar, "EW_spi": sp.EW, "W_ig": ig.EW})
     return pd.DataFrame(rows) if rows else None

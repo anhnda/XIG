@@ -45,7 +45,7 @@ def image_table(dm):
     t["budget"] = ig.L1bar - sp.L1bar
     t["b_exposure"] = ig.EW - sp.EW
     t["b_within"] = sp.within - ig.within
-    t["b_between"] = sp.between
+    t["b_between"] = sp["between"]
     for reg, sfx in (("in", "_in"), ("out", None)):
         if sfx:
             W_i, W_s, L_i, L_s = ig.EW_in, sp.EW_in, ig.L1bar_in, sp.L1bar_in
@@ -53,7 +53,7 @@ def image_table(dm):
         else:
             W_i, W_s = ig.EW - ig.EW_in, sp.EW - sp.EW_in
             L_i, L_s = ig.L1bar - ig.L1bar_in, sp.L1bar - sp.L1bar_in
-            wi_i, wi_s, bt = ig.within - ig.within_in, sp.within - sp.within_in, sp.between - sp.between_in
+            wi_i, wi_s, bt = ig.within - ig.within_in, sp.within - sp.within_in, sp["between"] - sp.between_in
         t[f"budget_{reg}"] = L_i - L_s
         t[f"b_exposure_{reg}"] = W_i - W_s
         t[f"b_within_{reg}"] = wi_s - wi_i
@@ -148,7 +148,7 @@ def plot_e2(out, plt, dm, it):
     f = os.path.join(out, "e2_decomposition.png"); fig.savefig(f); plt.close(fig); files.append(f)
 
     sp = im[im.method == "spi10"].copy()
-    sp["between_frac"] = sp.between / sp.EW
+    sp["between_frac"] = sp["between"] / sp.EW
     fig, ax = plt.subplots(1, 3, figsize=(13, 3.6))
     for a, col, lab in zip(ax, ["between_frac", "iou", "insdel_blur"], ["between/EW", "IoU(Ā_K)", "insdel_blur(Ā_K)"]):
         if col not in sp:
@@ -243,7 +243,7 @@ def e3_table(dm):
     t["W_ratio"] = sp.EW / ig.EW
     t["L1bar_ratio"] = sp.L1bar / ig.L1bar
     t["within_frac_spi"] = sp.within / sp.EW
-    t["between_frac_spi"] = sp.between / sp.EW
+    t["between_frac_spi"] = sp["between"] / sp.EW
     t["within_frac_ig"] = ig.within / ig.EW
     fh = dm[(dm.level == "image") & (dm.component == "F+H")]
     f0 = dm[(dm.level == "image") & (dm.component == "F")]
@@ -382,7 +382,7 @@ Cầu phương: mỗi đoạn chia M tầng, một điểm đều mỗi tầng (
                                       iou_K1_med=("iou", "median"))
         L.append(md(per.mean().to_frame("trung bình qua ảnh").T))
         sp = dm[(dm.level == "image") & (dm.component == "F") & (dm.method == "spi10")].copy()
-        sp["between_frac"] = sp.between / sp.EW
+        sp["between_frac"] = sp["between"] / sp.EW
         L.append("### E2d. Theo K (Ā_K từ K đường đầu)\n")
         L.append("between_K dùng ‖Ā_K‖₁ hữu hạn K, vốn bị nhiễu MC thổi phồng → between_K **thấp hơn** giá trị K→∞; "
                  "đường cong theo K cho thấy nó đã bão hoà hay chưa.\n")
