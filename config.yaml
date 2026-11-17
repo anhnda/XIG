@@ -150,7 +150,16 @@ e5:
   signal: {n_images: 6, sizes: [24], locations: [inside, outside], B_frac: 0.5, inside_min: 0.8, outside_max: 0.05,
            min_denominator: 0.05, tries: 400}
 
+# E6: cô lập gradient guidance (A) và cấu trúc đồng bộ (B) (hash riêng)
+e6:
+  split: pilot               # pilot = exploratory (16 ảnh cũ); confirm = 50 ảnh mới, lần chạy đầu ghi e6_prereg.json
+  n_images: 16
+  A: {N: 128, M: 4, perm_seeds: 6, perm_bins: 10, donors: 2, spi_paths: 4}
+  B: {N: 64, M: 4, paths: 4, kinds: [indep, rgb, block4, block16, block56, global]}
+
 debug:
+  e6: {n_images: 1, A: {N: 16, M: 2, perm_seeds: 2, donors: 1, spi_paths: 2},
+       B: {N: 8, M: 2, paths: 2, kinds: [indep, rgb, block56, global]}}
   e5: {n_images: 2, ig_steps: 16, blur_steps: 12, guided_steps: 16, spi_paths: 4, spi_perm_paths: 2, lam_paths: 2,
        perm_kinds: [bin, block], block: 56, heatmap_images: 1, signal: {n_images: 1, locations: [inside]}}
   cross:

@@ -416,3 +416,39 @@ def test_sim_uniform_scaling_confound():
     a = sim(0.4 * Wref, 0.8 * Wref, Wref, Wref, Wref)
     assert a["spearman_avoided_raw"] > 0.999                        # confound: giảm đều vẫn cho tương quan 1
     assert abs(a["c_m"] - 0.4) < 1e-12 and abs(a["c_n"] - 0.8) < 1e-12
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E6: chia sẻ lịch trình, chuyển lịch trình
+# ─────────────────────────────────────────────────────────────────────────────
+
+from probe.e6 import group_index, shared_schedule, transfer  # noqa: E402
+
+
+@pytest.mark.parametrize("kind,n", [("indep", 3 * 16 * 16), ("rgb", 16 * 16), ("block4", 16), ("block8", 4), ("global", 1)])
+def test_group_index(kind, n):
+    lab, k = group_index(kind, (3, 16, 16))
+    assert k == n and int(lab.max()) == n - 1 and lab.numel() == 3 * 16 * 16
+
+
+def test_shared_schedule_global_is_straight_line():
+    x0 = torch.zeros(1, 3, 16, 16, dtype=F64)
+    x = torch.rand(1, 3, 16, 16, dtype=F64) + 0.1
+    Z, n = shared_schedule("global", 5.0, 12, (3, 16, 16), generator(17, "cpu"))
+    assert n == 1 and torch.allclose(Z, Z[:, :1, :1, :1].expand_as(Z))
+    assert geom_dist(x0 + Z * (x - x0)) < 1e-12
+    Zr, _ = shared_schedule("rgb", 5.0, 12, (3, 16, 16), generator(18, "cpu"))
+    assert torch.equal(Zr[:, 0], Zr[:, 1]) and not torch.equal(Zr[:, :, 0, 0], Zr[:, :, 0, 1])
+    assert torch.all(Zr[0] == 0) and torch.all(Zr[-1] == 1)
+
+
+def test_transfer_rank_matching():
+    torch.manual_seed(12)
+    Zd = cum_nodes(spi_increments(3.0, 6, (3, 8, 8), generator(19, "cpu")))
+    ad, at = torch.rand(3, 8, 8, dtype=F64), torch.rand(3, 8, 8, dtype=F64)
+    Zt = transfer(Zd, ad, at)
+    for c in range(3):
+        k = int(torch.argmax(at[c]).item())
+        kd = int(torch.argmax(ad[c]).item())
+        assert torch.equal(Zt[:, c].flatten(1)[:, k], Zd[:, c].flatten(1)[:, kd])      # hạng cao nhất ↔ hạng cao nhất
+        assert torch.equal(Zt[:, c].flatten(1).sort(1).values, Zd[:, c].flatten(1).sort(1).values)
