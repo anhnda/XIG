@@ -123,6 +123,17 @@ cross:
     tau_bins: 10
     dist_bins: [0.0, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 10.0]
     heatmap_images: 3
+  e4d:                       # hội tụ heatmap đầu ra (tương quan thứ hạng giữa các phương pháp)
+    n_images: 16
+    M: 4                     # điểm/đoạn cho MỖI bộ cầu phương (đường tất định có 2 bộ độc lập → trần độ tin cậy)
+    ig_steps: 128
+    guided_steps: 128
+    blur_steps: 100
+    spi_paths: 32            # đường pilot 0..31; hai nửa chẵn/lẻ → trần độ tin cậy của SPI
+    k_curve: [1, 2, 4, 8, 16, 32]
+    pools: [4, 16]           # Spearman/Kendall thêm ở 56×56 và 14×14
+    topk: [0.05, 0.1, 0.2]
+    heatmap_images: 3
   e4c:
     n_images: 16
     alphas: [1000, 100, 30, 10, 3, 1]
@@ -193,7 +204,27 @@ e9:
   B: {split: pilot, n_images: 16, alpha: 10, N: 64, M: 4, K: 8, q: [0, 0.25, 0.5, 0.75, 1], per_path_insdel: true,
       interaction: {grid: 8, t: [0.25, 0.5, 0.75], step: 0.5}}
 
+# OCS — Output Convergence Study (hash riêng). split: pilot = exploratory (16 ảnh cũ); fresh = ảnh CHƯA dùng ở bất kỳ lượt nào
+# (lần chạy fresh đầu tiên ghi ocs_prereg.json; sau đó không sửa mục này). Luật quyết định nằm ở `decision`.
+ocs:
+  split: pilot
+  n_images: 16
+  M: 4                       # điểm/đoạn cho MỖI bộ cầu phương (đường tất định có 2 bộ → within)
+  ig_steps: 128
+  guided_steps: 128
+  blur_steps: 100
+  spi_paths_per_half: 16     # hai tập đường SPI rời nhau (đường pilot 0..15 và 16..31)
+  k_list: [1, 2, 4, 8, 16]
+  shuffle_block: 16          # null: xáo khối 16×16 của bản đồ thứ hai
+  metrics: {pools: [4, 16], topk: [0.01, 0.05, 0.1, 0.2], rbo_p: 0.998, radii: [2, 4, 8], sw_proj: 64, sw_pool: 4}
+  consensus: {methods: [spi, guided, blur], top_frac: 0.1, draws: 8, min_size: 50, bases: [blur, black]}
+  decision: {key_pair: [spi, guided], rank_ratio_min: 0.8, signed_ratio_min: 0.8, sign_agree_min: 0.8,
+             consensus_base: blur, consensus_metric: del_logit}
+  heatmap_images: 3
+
 debug:
+  ocs: {n_images: 1, M: 2, ig_steps: 16, guided_steps: 16, blur_steps: 12, spi_paths_per_half: 2, k_list: [1, 2],
+        consensus: {draws: 2, min_size: 5}, heatmap_images: 1}
   e9: {A: {split: pilot, n_images: 1, K: 1, M: [4], ref_N: 32, ref_M: 4}, H1: {n_images: 1},
        B: {n_images: 1, N: 8, M: 2, K: 2, q: [0, 0.5, 1], per_path_insdel: false, interaction: {grid: 4, t: [0.5]}}}
   e8: {split: pilot, n_images: 2, N: 8, N_fine: 32, M: 2, K: 2, kinds: [indep, rgb, rand16, block4, global],
@@ -215,6 +246,7 @@ debug:
            toy: {N_fine: 128, N: [16, 64], paths: 30, w_points: 512}}
     e4: {n_images: 2, M: 2, spi_paths: 3, ig_steps: 16, guided_steps: 16, blur_steps: 12, heatmap_images: 1}
     e4c: {n_images: 1, alphas: [100, 10, 1], paths: 2, per_path_insdel: false}
+    e4d: {n_images: 1, M: 2, ig_steps: 16, guided_steps: 16, blur_steps: 12, spi_paths: 4, k_curve: [1, 2, 4], heatmap_images: 1}
   mechanism:
     e1: {n_images: 1, ig_steps: 16, spi_paths: [0], M: [1, 2, 4], dp_N: [8, 32], dp_points: 128, dp_realizations: 1,
          toy: {N_fine: 256, N: [16, 64], paths: 50}}

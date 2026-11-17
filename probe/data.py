@@ -64,4 +64,5 @@ def splits(cfg: dict, n_total: int) -> dict:
     rest = [i for i in range(n_total) if i not in excl]
     random.Random(int(cfg["data"]["index_seed"])).shuffle(rest)
     a, b, c = int(cfg["data"]["n_pilot"]), int(cfg["data"]["n_confirm"]), int(cfg["data"]["n_other"])
-    return {"pilot": rest[:a], "confirm": rest[a:a + b], "other": rest[a + b:a + b + c], "n_excluded": len(excl)}
+    return {"pilot": rest[:a], "confirm": rest[a:a + b], "other": rest[a + b:a + b + c], "n_excluded": len(excl),
+            "fresh": rest[a + b + c:]}            # phần còn lại, theo đúng thứ tự xáo; chưa dùng ở bất kỳ lượt nào

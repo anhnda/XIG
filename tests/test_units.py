@@ -577,3 +577,61 @@ def test_aw_stream_matches_strat_points():
     A1, W1 = aw(G, X[1:] - X[:-1], 5, max_points=7)
     A2, W2 = aw_stream(fn, X, 5, generator(41, "cpu"), 64, max_points=12)
     assert torch.allclose(A1, A2, atol=1e-12) and torch.allclose(W1, W2, atol=1e-12)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E4d: tương quan thứ hạng giữa heatmap
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_kendall_and_map_sim():
+    from probe.cross import kendall_tau_b, map_sim
+    a = torch.rand(10, 10, dtype=F64)
+    assert abs(kendall_tau_b(a, a) - 1) < 1e-12 and abs(kendall_tau_b(a, -a) + 1) < 1e-12
+    A = torch.randn(3, 32, 32, dtype=F64)
+    m = {"abs": A.abs().sum(0), "signed": A.sum(0)}
+    perm = torch.randperm(32 * 32)
+    s = map_sim(m, m, [4, 16], [0.1], perm)
+    assert all(abs(v - 1) < 1e-9 for v in s.values()), s
+    m2 = {"abs": torch.rand(32, 32, dtype=F64), "signed": torch.randn(32, 32, dtype=F64)}
+    s2 = map_sim(m, m2, [4], [0.1], perm)
+    assert abs(s2["spearman_224"]) < 0.3                                          # bản đồ độc lập: tương quan nhỏ
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OCS: thước đo tương đồng, xáo khối, đối chứng khớp hạng
+# ─────────────────────────────────────────────────────────────────────────────
+
+from probe.ocs import Map, block_shuffle, matched_control, rbo_ext, sim, top_mask  # noqa: E402
+
+_OCS_M = {"pools": [4, 8], "topk": [0.05, 0.1], "rbo_p": 0.99, "radii": [2], "sw_proj": 8, "sw_pool": 4}
+
+
+def test_ocs_identical_maps():
+    A = torch.randn(3, 32, 32, dtype=F64)
+    m = Map(A)
+    perm = torch.randperm(32 * 32)
+    s = sim(m, m, _OCS_M, perm, generator(50, "cpu"))
+    for k, v in s.items():
+        target = 0.0 if k in ("l1_norm_dist", "sliced_w1") else 1.0
+        assert abs(v - target) < 1e-9, (k, v)
+    assert abs(rbo_ext(m.abs, m.abs, 0.99, perm) - 1) < 1e-9
+
+
+def test_ocs_signed_flip_and_shuffle():
+    A = torch.randn(3, 32, 32, dtype=F64)
+    perm = torch.randperm(32 * 32)
+    s = sim(Map(A), Map(-A), _OCS_M, perm, generator(51, "cpu"))
+    assert abs(s["spearman_abs"] - 1) < 1e-9 and s["cos_elem"] < -0.999 and s["sign_agree_top10"] == 0.0
+    sh = block_shuffle(Map(A), 8, torch.Generator().manual_seed(0))
+    assert torch.equal(sh.A.flatten().sort().values, A.flatten().sort().values) and not torch.equal(sh.A, A)
+
+
+def test_matched_control():
+    v = torch.rand(40 * 40, dtype=F64)
+    perm = torch.randperm(1600)
+    T = top_mask(v, 0.2, perm)
+    o = perm[torch.argsort(v[perm], descending=True, stable=True)]
+    r = torch.empty_like(o); r[o] = torch.arange(1600)
+    Cset = T & (torch.rand(1600, generator=torch.Generator().manual_seed(1)) < 0.3)
+    ctrl = matched_control(r, T, Cset, torch.Generator().manual_seed(2))
+    assert int(ctrl.sum()) == int(Cset.sum()) and not (ctrl & Cset).any() and bool((ctrl <= T).all())

@@ -12,7 +12,8 @@
 #   mech-e1 | mech-e23 | mech-report   từng bước (mech-report: DEBUG=1 cho thư mục debug)
 #   cross-debug  E1′ + E4 ở chế độ debug → runs_probe_debug/cross/CROSS_REPORT.md
 #   cross        E1′ gate → E4 → E4c → CROSS_REPORT.md   (runs_probe/cross/)
-#   cross-gate | cross-e4 | cross-e4c | cross-report   từng bước (cross-report: DEBUG=1 cho thư mục debug)
+#   cross-gate | cross-e4 | cross-e4c | cross-e4d | cross-report   từng bước (cross-report: DEBUG=1 cho thư mục debug)
+#   cross-e4d-debug   E4d ở chế độ debug
 #   e5-debug   E5 ở chế độ debug → runs_probe_debug/e5/E5_REPORT.md
 #   e5         E5 → runs_probe/e5/E5_REPORT.md ;  e5-report: dựng lại báo cáo (DEBUG=1 cho thư mục debug)
 #   e6-debug   E6 ở chế độ debug → runs_probe_debug/e6_pilot/E6_REPORT.md
@@ -23,10 +24,12 @@
 #   e8         E8 xác nhận held-out → runs_probe/e8_confirm/E8_REPORT.md ;  e8-report: dựng lại (DEBUG=1 cho debug)
 #   e9-debug   E9 ở chế độ debug → runs_probe_debug/e9/E9_REPORT.md
 #   e9         E9 → runs_probe/e9/E9_REPORT.md ;  e9-report: dựng lại (DEBUG=1 cho debug)
+#   ocs-debug  Output Convergence Study ở chế độ debug → runs_probe_debug/ocs_pilot/OCS_REPORT.md
+#   ocs        Output Convergence Study → runs_probe/ocs_<split>/OCS_REPORT.md ;  ocs-report: dựng lại (DEBUG=1 cho debug)
 # env: CFG=config.yaml, EXTRA="--device cuda:1"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report|mech-debug|mech|mech-e1|mech-e23|mech-report|cross-debug|cross|cross-gate|cross-e4|cross-e4c|cross-report|e5-debug|e5|e5-report|e6-debug|e6|e6-report|e7-debug|e7|e7-report|e8-debug|e8|e8-report|e9-debug|e9|e9-report}
+STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report|mech-debug|mech|mech-e1|mech-e23|mech-report|cross-debug|cross|cross-gate|cross-e4|cross-e4c|cross-e4d|cross-e4d-debug|cross-report|e5-debug|e5|e5-report|e6-debug|e6|e6-report|e7-debug|e7|e7-report|e8-debug|e8|e8-report|e9-debug|e9|e9-report|ocs-debug|ocs|ocs-report}
 CFG=${CFG:-config.yaml}
 EXTRA=${EXTRA:-}
 PY="python -m probe --config $CFG $EXTRA"
@@ -42,7 +45,8 @@ case "$STAGE" in
   mech|mech-e1|mech-e23) $PY "$STAGE" ;;
   mech-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug mech-report; else $PY mech-report; fi ;;
   cross-debug) $PY --debug cross ;;
-  cross|cross-gate|cross-e4|cross-e4c) $PY "$STAGE" ;;
+  cross|cross-gate|cross-e4|cross-e4c|cross-e4d) $PY "$STAGE" ;;
+  cross-e4d-debug) $PY --debug cross-e4d ;;
   cross-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug cross-report; else $PY cross-report; fi ;;
   e5-debug) $PY --debug e5 ;;
   e5) $PY e5 ;;
@@ -59,5 +63,8 @@ case "$STAGE" in
   e9-debug) $PY --debug e9 ;;
   e9) $PY e9 ;;
   e9-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug e9-report; else $PY e9-report; fi ;;
+  ocs-debug) $PY --debug ocs ;;
+  ocs) $PY ocs ;;
+  ocs-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug ocs-report; else $PY ocs-report; fi ;;
   *) echo "stage không biết: $STAGE"; exit 1 ;;
 esac

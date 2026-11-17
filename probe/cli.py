@@ -13,6 +13,7 @@ python -m probe [--config config.yaml] [--debug] [--device cuda] <lệnh>
   cross-gate   E1′: between do nhiễu cầu phương (M lồng nhau) + toy bậc hai/bậc năm
   cross-e4     E4a+b: IG, SPI, Guided IG, BlurIG cùng thước đo exposure (mode, trạng thái, IDGI)
   cross-e4c    E4c: quét mức lệch nhịp (SPI α)
+  cross-e4d    E4d: hội tụ heatmap đầu ra giữa các phương pháp (tương quan thứ hạng, trần độ tin cậy, SPI theo K)
   cross-report CROSS_REPORT.md + đồ thị từ CSV đã có
   cross        cross-gate → cross-e4 → cross-e4c → cross-report
   e5           E5: residual avoidance, hoán vị lịch trình Guided, đường λ, tín hiệu → E5_REPORT.md
@@ -25,6 +26,8 @@ python -m probe [--config config.yaml] [--debug] [--device cuda] <lệnh>
   e8-report    E8_REPORT.md + đồ thị từ CSV đã có
   e9           E9: bất biến global≡IG (A1), H1 với nhiều eval (A2), quét ghép kênh RGB q + tương tác (B) → E9_REPORT.md
   e9-report    E9_REPORT.md + đồ thị từ CSV đã có
+  ocs          Output Convergence Study: hội tụ heatmap IG/SPI/Guided/BlurIG (4 tầng), within vs cross, consensus → OCS_REPORT.md
+  ocs-report   OCS_REPORT.md từ CSV đã có
 
 Kết quả: <local.out>[_debug]/pilot/. Chạy lại sẽ bỏ qua ảnh đã có trong cache (cùng hash config).
 """
@@ -43,15 +46,24 @@ def main(argv=None) -> None:
     ap.add_argument("--device", default=None)
     ap.add_argument("cmd", choices=["estimate", "conv", "main", "report", "all",
                                     "mech-e1", "mech-e23", "mech-report", "mech",
-                                    "cross-gate", "cross-e4", "cross-e4c", "cross-report", "cross", "e5", "e5-report",
+                                    "cross-gate", "cross-e4", "cross-e4c", "cross-e4d", "cross-report", "cross", "e5", "e5-report",
                                     "e6", "e6-report", "e7", "e7-report",
-                                    "e8", "e8-report", "e9", "e9-report"])
+                                    "e8", "e8-report", "e9", "e9-report",
+                                    "ocs", "ocs-report"])
     args = ap.parse_args(argv)
     cfg = C.load(args.config, debug=args.debug)
 
     if args.cmd == "report":
         from .report import write
         write(C.out_dir(cfg, "pilot"), cfg)
+        return
+    if args.cmd.startswith("ocs"):
+        from . import ocs as O
+        from .ocs_report import write as wo
+        if args.cmd == "ocs":
+            from .pilot import Ctx
+            O.run(Ctx(cfg, args.device))
+        wo(O.ocs_out(cfg), cfg)
         return
     if args.cmd.startswith("e9"):
         from . import e9 as E9
@@ -99,7 +111,7 @@ def main(argv=None) -> None:
         if args.cmd != "cross-report":
             from .pilot import Ctx
             ctx = Ctx(cfg, args.device)
-            for st in ("gate", "e4", "e4c"):
+            for st in ("gate", "e4", "e4c", "e4d"):
                 if args.cmd in (f"cross-{st}", "cross"):
                     X.run(ctx, st)
         cwrite(X.cross_out(cfg), cfg)
