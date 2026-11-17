@@ -222,7 +222,31 @@ ocs:
              consensus_base: blur, consensus_metric: del_logit}
   heatmap_images: 3
 
+# E10 — Random Path Family Ablation (hash riêng). Chạy trên ảnh fresh CHƯA dùng (bỏ qua fresh_offset ảnh đầu, dành cho OCS);
+# lần chạy đầu ghi e10_prereg.json (kèm kết quả hiệu chuẩn δ, σ); sau đó KHÔNG sửa mục này.
+e10:
+  split: fresh
+  fresh_offset: 100
+  n_images: 50
+  alpha: 10
+  N: 64
+  M: 4
+  K_half: 8                  # hai tập 8 đường rời nhau; đầu ra chính = trung bình 16 đường
+  per_path_insdel: false
+  gate: {n_images: 6, paths: 4, M_hi: 16}       # sai số cầu phương: cùng đường, M so với M_hi
+  calib: {d: 20000, seed: 10}                    # Monte Carlo hiệu chuẩn σ (không dùng ảnh)
+  metrics: {pools: [4, 16], topk: [0.05, 0.1, 0.2], rbo_p: 0.998, radii: [4], sw_proj: 32, sw_pool: 4}
+  stats: {bootstrap: 10000, alpha: 0.05, seed: 10}
+  hypotheses:
+    - {id: H1, a: smooth, b: dp, metrics: [iou, insdel_blur, insdel_black], test: equivalence, margin: 0.02}
+    - {id: H2, a: lognormal, b: dp, metrics: [iou, insdel_blur, insdel_black], test: equivalence, margin: 0.02}
+    - {id: H3, a: smooth, b: dp, metrics: [stab_cos_elem, stab_spearman_abs], test: two_sided, family: primary}
+    - {id: H4, a: lognormal, b: dp, metrics: [stab_cos_elem, stab_spearman_abs], test: two_sided, family: primary}
+    - {id: H5, a: dp, b: ig, metrics: [iou, insdel_blur, insdel_black], test: two_sided, family: primary}
+
 debug:
+  e10: {split: pilot, n_images: 1, N: 8, M: 2, K_half: 2, gate: {n_images: 1, paths: 1, M_hi: 4}, calib: {d: 2000},
+        stats: {bootstrap: 200}}
   ocs: {n_images: 1, M: 2, ig_steps: 16, guided_steps: 16, blur_steps: 12, spi_paths_per_half: 2, k_list: [1, 2],
         consensus: {draws: 2, min_size: 5}, heatmap_images: 1}
   e9: {A: {split: pilot, n_images: 1, K: 1, M: [4], ref_N: 32, ref_M: 4}, H1: {n_images: 1},

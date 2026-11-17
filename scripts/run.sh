@@ -26,10 +26,12 @@
 #   e9         E9 → runs_probe/e9/E9_REPORT.md ;  e9-report: dựng lại (DEBUG=1 cho debug)
 #   ocs-debug  Output Convergence Study ở chế độ debug → runs_probe_debug/ocs_pilot/OCS_REPORT.md
 #   ocs        Output Convergence Study → runs_probe/ocs_<split>/OCS_REPORT.md ;  ocs-report: dựng lại (DEBUG=1 cho debug)
+#   e10-debug  E10 ở chế độ debug (1 ảnh pilot, không đụng ảnh fresh)
+#   e10        E10 trên ảnh fresh, tiền đăng ký → runs_probe/e10_fresh/E10_REPORT.md ;  e10-report: dựng lại (DEBUG=1 cho debug)
 # env: CFG=config.yaml, EXTRA="--device cuda:1"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report|mech-debug|mech|mech-e1|mech-e23|mech-report|cross-debug|cross|cross-gate|cross-e4|cross-e4c|cross-e4d|cross-e4d-debug|cross-report|e5-debug|e5|e5-report|e6-debug|e6|e6-report|e7-debug|e7|e7-report|e8-debug|e8|e8-report|e9-debug|e9|e9-report|ocs-debug|ocs|ocs-report}
+STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report|mech-debug|mech|mech-e1|mech-e23|mech-report|cross-debug|cross|cross-gate|cross-e4|cross-e4c|cross-e4d|cross-e4d-debug|cross-report|e5-debug|e5|e5-report|e6-debug|e6|e6-report|e7-debug|e7|e7-report|e8-debug|e8|e8-report|e9-debug|e9|e9-report|ocs-debug|ocs|ocs-report|e10-debug|e10|e10-report}
 CFG=${CFG:-config.yaml}
 EXTRA=${EXTRA:-}
 PY="python -m probe --config $CFG $EXTRA"
@@ -66,5 +68,8 @@ case "$STAGE" in
   ocs-debug) $PY --debug ocs ;;
   ocs) $PY ocs ;;
   ocs-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug ocs-report; else $PY ocs-report; fi ;;
+  e10-debug) $PY --debug e10 ;;
+  e10) $PY e10 ;;
+  e10-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug e10-report; else $PY e10-report; fi ;;
   *) echo "stage không biết: $STAGE"; exit 1 ;;
 esac

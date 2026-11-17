@@ -639,3 +639,30 @@ def test_matched_control():
     Cset = T & (torch.rand(1600, generator=torch.Generator().manual_seed(1)) < 0.3)
     ctrl = matched_control(r, T, Cset, torch.Generator().manual_seed(2))
     assert int(ctrl.sum()) == int(Cset.sum()) and not (ctrl & Cset).any() and bool((ctrl <= T).all())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E10: các họ lịch trình, khớp mức exploration
+# ─────────────────────────────────────────────────────────────────────────────
+
+from probe.e10 import calibrate, d_dp_grid, d_hat, sched  # noqa: E402
+
+
+@pytest.mark.parametrize("fam", ["ig", "dp", "smooth", "lognormal"])
+def test_e10_schedules_valid(fam):
+    delta = math.sqrt(5 / 11)
+    Z = sched(fam, 32, (4000,), generator(60, "cpu"), 10.0, delta, 0.8)
+    assert torch.all(Z[0] == 0) and torch.allclose(Z[-1], torch.ones_like(Z[-1]))
+    assert bool(((Z[1:] - Z[:-1]) >= -1e-12).all())                               # đơn điệu
+    t = torch.linspace(0, 1, 33, dtype=F64)
+    assert float((Z.mean(1) - t).abs().max()) < 0.03                              # E Z(t) = t
+
+
+def test_e10_exploration_matching():
+    cfg = {"e10": {"alpha": 10, "N": 64, "calib": {"d": 20000, "seed": 3}}}
+    cal = calibrate(cfg)
+    assert abs(cal["D_target_dp_grid"] - d_dp_grid(10, 64)) < 1e-15
+    assert abs(cal["D_lognormal_grid_mc"] / cal["D_target_dp_grid"] - 1) < 1e-3              # σ khớp D trên lưới
+    assert abs(cal["D_dp_grid_mc"] / cal["D_target_dp_grid"] - 1) < 0.05                     # Monte Carlo DP khớp giải tích
+    assert abs(cal["D_smooth_grid_mc"] / cal["D_smooth_continuous"] - 1) < 0.01              # δ²/30 trên lưới mịn
+    assert abs(cal["D_smooth_continuous"] - cal["D_dp_continuous"]) < 1e-12                  # δ = √(5/(α+1)) khớp DP liên tục

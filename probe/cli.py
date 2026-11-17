@@ -28,6 +28,8 @@ python -m probe [--config config.yaml] [--debug] [--device cuda] <lệnh>
   e9-report    E9_REPORT.md + đồ thị từ CSV đã có
   ocs          Output Convergence Study: hội tụ heatmap IG/SPI/Guided/BlurIG (4 tầng), within vs cross, consensus → OCS_REPORT.md
   ocs-report   OCS_REPORT.md từ CSV đã có
+  e10          E10: Random Path Family Ablation (IG, DP, smooth warp, logistic-normal; khớp mức exploration) → E10_REPORT.md
+  e10-report   E10_REPORT.md từ CSV đã có
 
 Kết quả: <local.out>[_debug]/pilot/. Chạy lại sẽ bỏ qua ảnh đã có trong cache (cùng hash config).
 """
@@ -49,13 +51,21 @@ def main(argv=None) -> None:
                                     "cross-gate", "cross-e4", "cross-e4c", "cross-e4d", "cross-report", "cross", "e5", "e5-report",
                                     "e6", "e6-report", "e7", "e7-report",
                                     "e8", "e8-report", "e9", "e9-report",
-                                    "ocs", "ocs-report"])
+                                    "ocs", "ocs-report", "e10", "e10-report"])
     args = ap.parse_args(argv)
     cfg = C.load(args.config, debug=args.debug)
 
     if args.cmd == "report":
         from .report import write
         write(C.out_dir(cfg, "pilot"), cfg)
+        return
+    if args.cmd.startswith("e10"):
+        from . import e10 as E10
+        from .e10_report import write as w10
+        if args.cmd == "e10":
+            from .pilot import Ctx
+            E10.run(Ctx(cfg, args.device))
+        w10(E10.e10_out(cfg), cfg)
         return
     if args.cmd.startswith("ocs"):
         from . import ocs as O
