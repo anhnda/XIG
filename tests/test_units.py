@@ -328,3 +328,44 @@ def test_toy_exact_matches_fine_quadrature():
     assert torch.allclose(A[0], An, atol=1e-8) and abs(float(W[0] - Wn)) < 1e-6
     D = float(b @ Z[0, -1] + 0.5 * Z[0, -1] @ Cm @ Z[0, -1])
     assert abs(float(A[0].sum()) - D) < 1e-10
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E4: tách mode chính xác, exposure trên hàm tuyến tính, hồ sơ trạng thái
+# ─────────────────────────────────────────────────────────────────────────────
+
+from probe.cross import MODES, exposure, mode_split, state_rows  # noqa: E402
+
+
+def test_mode_split_exact():
+    G = torch.randn(4, 3, 16, 16, dtype=F64)
+    ms = mode_split(G, 2.0)
+    assert torch.allclose(sum(ms[m] for m in MODES), G, atol=1e-12)
+    assert torch.allclose(ms["cd_low"].sum(1), torch.zeros(4, 16, 16, dtype=F64), atol=1e-12)
+
+
+def test_exposure_linear_and_state():
+    torch.manual_seed(9)
+    a = torch.randn(1, 3, 8, 8, dtype=F64)
+    fn = lin_fn(a)
+    x0 = torch.zeros(1, 3, 8, 8, dtype=F64)
+    x = torch.rand(1, 3, 8, 8, dtype=F64) + 0.1
+    from probe.mechanism import strat_points
+    from probe.quad import fg
+    X = spi_nodes_from(spi_increments(3.0, 8, x.shape[1:], generator(12, "cpu")), x0, x - x0)
+    P, _ = strat_points(X, 2, generator(13, "cpu"))
+    _, G = fg(fn, P, 64)
+    e = exposure(G, X, 2, 1.0, chunk=3)
+    assert torch.allclose(e["A"], (a * (x - x0))[0], atol=1e-12)
+    assert abs(e["len"] - float((x - x0).abs().sum())) < 1e-9 and abs(e["chord_l1"] - e["len"]) < 1e-9
+    assert abs(float(e["segW"].sum()) - float(e["W"].sum())) < 1e-9
+    for m in MODES:                                     # gradient hằng: W_mode = Σ|mode(a)||Δx|
+        ref = (mode_split(a, 1.0)[m].abs() * (x - x0).abs())[0]
+        assert torch.allclose(e["Wm"][m], ref, atol=1e-10), m
+    rs = state_rows({"image": "t"}, e, 5, [0.0, 0.05, 0.1, 10.0])
+    assert abs(sum(r["share"] for r in rs if r["axis"] == "tau") - 1) < 1e-9
+    assert abs(sum(r["share"] for r in rs if r["axis"] == "dist") - 1) < 1e-9
+    Xl = straight_nodes(x, x0, 6)
+    P, _ = strat_points(Xl, 2, generator(14, "cpu"))
+    _, G = fg(fn, P, 64)
+    assert float(exposure(G, Xl, 2, 1.0)["dist"].abs().max()) < 1e-9          # đường thẳng: khoảng cách 0

@@ -102,7 +102,40 @@ mechanism:
     eta: 1.0
     u_low_at: 0.1            # thêm u tần số thấp tại ρ này (null để bỏ)
 
+# E1′ + E4: cổng số học bổ sung và so sánh xuyên phương pháp (hash riêng, không làm mất cache pilot/mechanism)
+cross:
+  mode_sigma: 2.0            # σ (px) tách tần số thấp/cao của gradient
+  focus_images: [seg03807]   # ảnh đối chứng (SPI giảm exposure nhưng IoU giảm)
+  gate:
+    n_images: 3
+    spi_paths: 16            # đường pilot 0..15
+    M: [2, 4, 8]             # lồng nhau trên cùng đường
+    ig_steps: 128
+    toy: {seed: 11, d: 32, alpha: 10, b_scale: 1.0, c_scale: 2.0, q_scale: 3.0, q_dirs: 8,
+          N_fine: 1024, N: [16, 32, 64, 128, 256], paths: 200, w_points: 4096}
+  e4:
+    n_images: 16             # cùng 16 ảnh pilot (gồm seg03807)
+    M: 4                     # điểm/đoạn
+    spi_paths: 32
+    ig_steps: 128            # IG và đoạn thẳng blur → x
+    guided_steps: 128
+    blur_steps: 100
+    tau_bins: 10
+    dist_bins: [0.0, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 10.0]
+    heatmap_images: 3
+  e4c:
+    n_images: 16
+    alphas: [1000, 100, 30, 10, 3, 1]
+    paths: 8
+    M: 2
+    per_path_insdel: true
+
 debug:
+  cross:
+    gate: {n_images: 1, spi_paths: 3, M: [1, 2, 4], ig_steps: 16,
+           toy: {N_fine: 128, N: [16, 64], paths: 30, w_points: 512}}
+    e4: {n_images: 2, M: 2, spi_paths: 3, ig_steps: 16, guided_steps: 16, blur_steps: 12, heatmap_images: 1}
+    e4c: {n_images: 1, alphas: [100, 10, 1], paths: 2, per_path_insdel: false}
   mechanism:
     e1: {n_images: 1, ig_steps: 16, spi_paths: [0], M: [1, 2, 4], dp_N: [8, 32], dp_points: 128, dp_realizations: 1,
          toy: {N_fine: 256, N: [16, 64], paths: 50}}

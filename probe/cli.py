@@ -10,6 +10,11 @@ python -m probe [--config config.yaml] [--debug] [--device cuda] <lệnh>
   mech-e23     E2 + E3: phân rã cơ chế trên ResNet (SPI K đường, IG) và trên bẫy H
   mech-report  MECHANISM_REPORT.md + đồ thị từ CSV đã có
   mech         mech-e1 → mech-e23 → mech-report
+  cross-gate   E1′: between do nhiễu cầu phương (M lồng nhau) + toy bậc hai/bậc năm
+  cross-e4     E4a+b: IG, SPI, Guided IG, BlurIG cùng thước đo exposure (mode, trạng thái, IDGI)
+  cross-e4c    E4c: quét mức lệch nhịp (SPI α)
+  cross-report CROSS_REPORT.md + đồ thị từ CSV đã có
+  cross        cross-gate → cross-e4 → cross-e4c → cross-report
 
 Kết quả: <local.out>[_debug]/pilot/. Chạy lại sẽ bỏ qua ảnh đã có trong cache (cùng hash config).
 """
@@ -27,13 +32,25 @@ def main(argv=None) -> None:
     ap.add_argument("--debug", action="store_true", help="ghi đè bằng mục debug: (ít ảnh, ít bước); ghi vào <out>_debug")
     ap.add_argument("--device", default=None)
     ap.add_argument("cmd", choices=["estimate", "conv", "main", "report", "all",
-                                    "mech-e1", "mech-e23", "mech-report", "mech"])
+                                    "mech-e1", "mech-e23", "mech-report", "mech",
+                                    "cross-gate", "cross-e4", "cross-e4c", "cross-report", "cross"])
     args = ap.parse_args(argv)
     cfg = C.load(args.config, debug=args.debug)
 
     if args.cmd == "report":
         from .report import write
         write(C.out_dir(cfg, "pilot"), cfg)
+        return
+    if args.cmd.startswith("cross"):
+        from . import cross as X
+        from .cross_report import write as cwrite
+        if args.cmd != "cross-report":
+            from .pilot import Ctx
+            ctx = Ctx(cfg, args.device)
+            for st in ("gate", "e4", "e4c"):
+                if args.cmd in (f"cross-{st}", "cross"):
+                    X.run(ctx, st)
+        cwrite(X.cross_out(cfg), cfg)
         return
     if args.cmd.startswith("mech"):
         from . import mechanism as Mx
