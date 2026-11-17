@@ -604,7 +604,8 @@ def test_kendall_and_map_sim():
 # OCS: thước đo tương đồng, xáo khối, đối chứng khớp hạng
 # ─────────────────────────────────────────────────────────────────────────────
 
-from probe.ocs import Map, block_shuffle, matched_control, rbo_ext, sim, top_mask  # noqa: E402
+from probe.ocs import Map, block_shuffle, matched_control, rbo_ext, top_mask  # noqa: E402
+from probe.ocs import sim as ocs_sim  # noqa: E402  (tránh trùng tên với probe.e5.sim)
 
 _OCS_M = {"pools": [4, 8], "topk": [0.05, 0.1], "rbo_p": 0.99, "radii": [2], "sw_proj": 8, "sw_pool": 4}
 
@@ -613,7 +614,7 @@ def test_ocs_identical_maps():
     A = torch.randn(3, 32, 32, dtype=F64)
     m = Map(A)
     perm = torch.randperm(32 * 32)
-    s = sim(m, m, _OCS_M, perm, generator(50, "cpu"))
+    s = ocs_sim(m, m, _OCS_M, perm, generator(50, "cpu"))
     for k, v in s.items():
         target = 0.0 if k in ("l1_norm_dist", "sliced_w1") else 1.0
         assert abs(v - target) < 1e-9, (k, v)
@@ -623,7 +624,7 @@ def test_ocs_identical_maps():
 def test_ocs_signed_flip_and_shuffle():
     A = torch.randn(3, 32, 32, dtype=F64)
     perm = torch.randperm(32 * 32)
-    s = sim(Map(A), Map(-A), _OCS_M, perm, generator(51, "cpu"))
+    s = ocs_sim(Map(A), Map(-A), _OCS_M, perm, generator(51, "cpu"))
     assert abs(s["spearman_abs"] - 1) < 1e-9 and s["cos_elem"] < -0.999 and s["sign_agree_top10"] == 0.0
     sh = block_shuffle(Map(A), 8, torch.Generator().manual_seed(0))
     assert torch.equal(sh.A.flatten().sort().values, A.flatten().sort().values) and not torch.equal(sh.A, A)
