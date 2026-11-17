@@ -486,15 +486,15 @@ def test_shared_vs_independent_schedule_counterexample():
     from probe.quad import fg
 
     def A_of(X):
-        P, _ = strat_points(X, 64, generator(20, "cpu"))
+        P, _ = strat_points(X, 1024, generator(20, "cpu"))       # sd của ước lượng phân tầng ≈ 1/(3·M^1.5) ≈ 1e-5
         _, G = fg(fn, P, 4096)
-        return aw(G, X[1:] - X[:-1], 64)[0].flatten()
+        return aw(G, X[1:] - X[:-1], 1024)[0].flatten()
 
     diag = torch.tensor([[0.0, 0.0], [1.0, 1.0]], dtype=F64).view(2, 2, 1, 1)
-    assert torch.allclose(A_of(diag), torch.tensor([2 / 3, 1 / 3], dtype=F64), atol=2e-3)
+    assert torch.allclose(A_of(diag), torch.tensor([2 / 3, 1 / 3], dtype=F64), atol=5e-4)
     o1 = torch.tensor([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]], dtype=F64).view(3, 2, 1, 1)
     o2 = torch.tensor([[0.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=F64).view(3, 2, 1, 1)
-    assert torch.allclose((A_of(o1) + A_of(o2)) / 2, torch.tensor([0.5, 0.5], dtype=F64), atol=2e-3)
+    assert torch.allclose((A_of(o1) + A_of(o2)) / 2, torch.tensor([0.5, 0.5], dtype=F64), atol=5e-4)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
