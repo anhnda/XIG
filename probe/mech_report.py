@@ -308,6 +308,7 @@ Cầu phương: mỗi đoạn chia M tầng, một điểm đều mỗi tầng (
         qq = qq.join(ref[["W", "L1", "within"]], on=["image", "path", "p"], rsuffix="_ref")
         qq["within_bias_rel_W"] = (qq.within - qq.within_ref) / qq.W_ref
         qq["L1_bias_rel_W"] = (qq.L1 - qq.L1_ref) / qq.W_ref
+        qq["within_frac"] = qq.within / qq.W
         L.append(f"### E1a. Đường cố định, tăng số điểm cầu phương (ref: M = {Mmax}, `left` = nút trái)\n")
         L.append("`A_dist_l1` = ‖A − A_ref‖₁/‖A_ref‖₁. `L1_bias_rel_W` = (‖A‖₁ − ‖A_ref‖₁)/W_ref: độ chệch lên của "
                  "‖A‖₁ do nhiễu cầu phương (Jensen), quy về đơn vị W. `within_bias_rel_W` = chệch của số hạng within.\n")
@@ -315,7 +316,7 @@ Cầu phương: mỗi đoạn chia M tầng, một điểm đều mỗi tầng (
                                              A_dist_l2=("A_dist_l2", "median"), W_relerr=("W_relerr", "median"),
                                              L1_bias_rel_W=("L1_bias_rel_W", "median"),
                                              within_bias_rel_W=("within_bias_rel_W", "median"),
-                                             within_frac=("within", "median"), abs_resid=("resid_rel", lambda s: s.abs().median()))
+                                             within_frac=("within_frac", "median"), abs_resid=("resid_rel", lambda s: s.abs().median()))
         L.append(md(t, index=True))
         sel = qq[qq.quad == str(M2)]
         gate["quad_L1_bias"] = float(sel.L1_bias_rel_W.abs().median()) if len(sel) else float("nan")
