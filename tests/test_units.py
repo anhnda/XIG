@@ -259,3 +259,72 @@ def test_diagnostics_shapes(toy):
     d = idgi_diagnostics(ev, mask)
     assert d["q"].shape[0] == 16 and 0 <= float(d["q"].min()) and float(d["q"].max()) <= 1 + 1e-9
     assert 0 <= d["P_M"] <= 1 + 1e-9
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E1–E3: cầu phương phân tầng, A/W, phân rã, toy chính xác
+# ─────────────────────────────────────────────────────────────────────────────
+
+from probe.mechanism import aw, decomp, nested_pick, strat_points, summ, toy_exact  # noqa: E402
+
+
+def test_strat_points_and_aw_linear():
+    torch.manual_seed(7)
+    a = torch.randn(1, 3, 4, 4, dtype=F64)
+    fn = lin_fn(a)
+    x0 = torch.zeros(1, 3, 4, 4, dtype=F64)
+    x = torch.rand(1, 3, 4, 4, dtype=F64) + 0.1
+    X = spi_nodes_from(spi_increments(3.0, 8, x.shape[1:], generator(9, "cpu")), x0, x - x0)
+    P, s = strat_points(X, 4, generator(10, "cpu"))
+    assert P.shape[0] == 8 * 4 and float(s.min()) >= 0 and float(s.max()) <= 1
+    assert torch.all((s * 4).floor() == torch.arange(4, dtype=F64).view(1, 4))     # một điểm mỗi tầng
+    from probe.quad import fg
+    _, G = fg(fn, P, 64)
+    A, W = aw(G, X[1:] - X[:-1], 4)
+    assert torch.allclose(A, (a * (x - x0))[0], atol=1e-12)
+    assert torch.allclose(W, (a.abs() * (x - x0).abs())[0], atol=1e-12)            # đường đơn điệu: W = Σ|a||Δx|
+
+
+def test_nested_pick_strata():
+    ix = nested_pick(5, 16, 4, generator(11, "cpu"), "cpu")
+    assert ix.shape == (5, 4)
+    assert torch.all(ix // 4 == torch.arange(4).view(1, 4))
+
+
+def test_decomposition_nonnegative_and_exact():
+    torch.manual_seed(8)
+    m3 = torch.zeros(3, 4, 4, dtype=torch.bool); m3[:, :2] = True
+    fn = lambda Z: torch.sin(3 * Z).flatten(1).sum(1) * (Z[:, :1] ** 2).flatten(1).sum(1)
+    x0 = torch.zeros(1, 3, 4, 4, dtype=F64)
+    x = torch.rand(1, 3, 4, 4, dtype=F64) + 0.5
+    from probe.quad import fg
+    rs, Asum = [], None
+    for p in range(6):
+        X = spi_nodes_from(spi_increments(2.0, 8, x.shape[1:], generator(20 + p, "cpu")), x0, x - x0)
+        P, _ = strat_points(X, 2, generator(40 + p, "cpu"))
+        _, G = fg(fn, P, 64)
+        A, W = aw(G, X[1:] - X[:-1], 2)
+        rs.append(summ(A, W, m3))
+        Asum = A if Asum is None else Asum + A
+    D = float(fn(x) - fn(x0))
+    d = decomp(rs, Asum / 6, D, m3)
+    for k in ("within", "between", "across", "within_in", "between_in"):
+        assert d[k] >= -1e-12, k
+    assert abs(d["EW"] - abs(D) - (d["within"] + d["between"] + d["across"] + d["resid"])) < 1e-9
+
+
+def test_toy_exact_matches_fine_quadrature():
+    g = torch.Generator().manual_seed(3)
+    d = 5
+    b = torch.randn(d, generator=g, dtype=F64)
+    Cm = torch.randn(d, d, generator=g, dtype=F64); Cm = (Cm + Cm.T) / 2; Cm.fill_diagonal_(0)
+    Z = cum_nodes(spi_increments(4.0, 6, (d,), g)).unsqueeze(0) * (0.5 + torch.rand(d, generator=g, dtype=F64))
+    A, W = toy_exact(Z, b, Cm)
+    t = torch.linspace(0, 1, 20001, dtype=F64)[:-1] + 0.5 / 20000                     # midpoint rất mịn
+    dZ = Z[0, 1:] - Z[0, :-1]
+    gz = b + (Z[0, :-1].unsqueeze(1) + t.view(1, -1, 1) * dZ.unsqueeze(1)) @ Cm.T    # (N, T, d)
+    Wn = (gz.abs().mean(1) * dZ.abs()).sum()
+    An = (gz.mean(1) * dZ).sum(0)
+    assert torch.allclose(A[0], An, atol=1e-8) and abs(float(W[0] - Wn)) < 1e-6
+    D = float(b @ Z[0, -1] + 0.5 * Z[0, -1] @ Cm @ Z[0, -1])
+    assert abs(float(A[0].sum()) - D) < 1e-10

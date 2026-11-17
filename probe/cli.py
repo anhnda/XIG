@@ -6,6 +6,10 @@ python -m probe [--config config.yaml] [--debug] [--device cuda] <lệnh>
   main      P1 + P2 + P3 trong một lượt mỗi ảnh
   report    đồ thị + ATTR_PROBE_PILOT_REPORT.md từ các CSV đã có
   all       conv → main → report
+  mech-e1      E1: kiểm định số học của phân rã (đường cố định, gộp bước nhảy DP, toy)
+  mech-e23     E2 + E3: phân rã cơ chế trên ResNet (SPI K đường, IG) và trên bẫy H
+  mech-report  MECHANISM_REPORT.md + đồ thị từ CSV đã có
+  mech         mech-e1 → mech-e23 → mech-report
 
 Kết quả: <local.out>[_debug]/pilot/. Chạy lại sẽ bỏ qua ảnh đã có trong cache (cùng hash config).
 """
@@ -22,13 +26,26 @@ def main(argv=None) -> None:
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--debug", action="store_true", help="ghi đè bằng mục debug: (ít ảnh, ít bước); ghi vào <out>_debug")
     ap.add_argument("--device", default=None)
-    ap.add_argument("cmd", choices=["estimate", "conv", "main", "report", "all"])
+    ap.add_argument("cmd", choices=["estimate", "conv", "main", "report", "all",
+                                    "mech-e1", "mech-e23", "mech-report", "mech"])
     args = ap.parse_args(argv)
     cfg = C.load(args.config, debug=args.debug)
 
     if args.cmd == "report":
         from .report import write
         write(C.out_dir(cfg, "pilot"), cfg)
+        return
+    if args.cmd.startswith("mech"):
+        from . import mechanism as Mx
+        from .mech_report import write as mwrite
+        if args.cmd != "mech-report":
+            from .pilot import Ctx
+            ctx = Ctx(cfg, args.device)
+            if args.cmd in ("mech-e1", "mech"):
+                Mx.run(ctx, "e1")
+            if args.cmd in ("mech-e23", "mech"):
+                Mx.run(ctx, "e23")
+        mwrite(Mx.mech_out(cfg), cfg)
         return
 
     from . import pilot as P

@@ -77,7 +77,37 @@ exp_b:
   noise_samples: 16
   n_other: 4                 # số ảnh khác (split other) để đo |H|
 
+# E1–E3: phân rã cơ chế (mục này có hash riêng, sửa không làm mất cache pilot)
+mechanism:
+  e1:
+    n_images: 3
+    ig_steps: 64             # IG: đường cố định, N đoạn
+    spi_paths: [0, 1, 2, 3]  # đường SPI của pilot (cùng seed), N = paths.spi10.steps
+    M: [1, 2, 4, 8, 16]      # điểm/đoạn; lồng nhau, ref = M lớn nhất
+    dp_N: [64, 128, 256]     # cùng một đường DP rút ở N lớn nhất, gộp cho lưới thô
+    dp_points: 1024          # tổng số điểm cầu phương mỗi lưới (M = dp_points / N)
+    dp_realizations: 2
+    toy: {seed: 11, d: 32, alpha: 10, b_scale: 1.0, c_scale: 2.0, N_fine: 2048, N: [16, 32, 64, 128, 256, 512], paths: 300}
+  e2:
+    n_images: 16             # = ảnh của pilot exp_a
+    paths: 64                # 32 đường đầu trùng pilot
+    M: 2                     # điểm/đoạn (tầng)
+    ig_steps: 128
+    K_checkpoints: [1, 2, 4, 8, 16, 32, 64]
+    per_path_insdel: true    # insertion/deletion (baseline blur) cho từng đường K=1
+    heatmap_images: 2
+  e3:
+    n_images: 6              # = ảnh bẫy của pilot; dùng chung đường và điểm với E2
+    rho: [0.03, 0.1, 0.2, 0.3]
+    eta: 1.0
+    u_low_at: 0.1            # thêm u tần số thấp tại ρ này (null để bỏ)
+
 debug:
+  mechanism:
+    e1: {n_images: 1, ig_steps: 16, spi_paths: [0], M: [1, 2, 4], dp_N: [8, 32], dp_points: 128, dp_realizations: 1,
+         toy: {N_fine: 256, N: [16, 64], paths: 50}}
+    e2: {n_images: 2, paths: 4, ig_steps: 16, K_checkpoints: [1, 2, 4], per_path_insdel: false, heatmap_images: 1}
+    e3: {n_images: 1, rho: [0.03, 0.3], u_low_at: null}
   paths:
     ig:     {steps: 16}
     spi10:  {steps: 8, paths: 4, k_group: 2}
