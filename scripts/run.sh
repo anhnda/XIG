@@ -13,10 +13,12 @@
 #   cross-debug  E1′ + E4 ở chế độ debug → runs_probe_debug/cross/CROSS_REPORT.md
 #   cross        E1′ gate → E4 → E4c → CROSS_REPORT.md   (runs_probe/cross/)
 #   cross-gate | cross-e4 | cross-e4c | cross-report   từng bước (cross-report: DEBUG=1 cho thư mục debug)
+#   e5-debug   E5 ở chế độ debug → runs_probe_debug/e5/E5_REPORT.md
+#   e5         E5 → runs_probe/e5/E5_REPORT.md ;  e5-report: dựng lại báo cáo (DEBUG=1 cho thư mục debug)
 # env: CFG=config.yaml, EXTRA="--device cuda:1"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report|mech-debug|mech|mech-e1|mech-e23|mech-report|cross-debug|cross|cross-gate|cross-e4|cross-e4c|cross-report}
+STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report|mech-debug|mech|mech-e1|mech-e23|mech-report|cross-debug|cross|cross-gate|cross-e4|cross-e4c|cross-report|e5-debug|e5|e5-report}
 CFG=${CFG:-config.yaml}
 EXTRA=${EXTRA:-}
 PY="python -m probe --config $CFG $EXTRA"
@@ -34,5 +36,8 @@ case "$STAGE" in
   cross-debug) $PY --debug cross ;;
   cross|cross-gate|cross-e4|cross-e4c) $PY "$STAGE" ;;
   cross-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug cross-report; else $PY cross-report; fi ;;
+  e5-debug) $PY --debug e5 ;;
+  e5) $PY e5 ;;
+  e5-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug e5-report; else $PY e5-report; fi ;;
   *) echo "stage không biết: $STAGE"; exit 1 ;;
 esac

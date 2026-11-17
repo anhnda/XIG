@@ -130,7 +130,29 @@ cross:
     M: 2
     per_path_insdel: true
 
+# E5: bất đồng bộ hay chọn feature theo gradient (hash riêng)
+e5:
+  n_images: 16               # cùng 16 ảnh pilot (gồm seg03807)
+  M: 2                       # điểm/đoạn cho MỖI bộ cầu phương (a, b) → 4 điểm/đoạn tổng
+  ig_steps: 128              # IG và đoạn thẳng blur → x
+  blur_steps: 100
+  guided_steps: 128
+  spi_paths: 16              # đường pilot 0..15 (N = paths.spi10.steps)
+  spi_perm_paths: 8          # đối chứng âm: hoán vị "bin" chính 8 đường SPI đầu
+  lam_paths: 8               # P2: đường λ khớp hình học Guided
+  perm_kinds: [bin, pixel, block]
+  perm_draws: 2
+  perm_bins: 10              # thập phân vị |Δx| cho bin/pixel
+  block: 16                  # cạnh khối (px) cho "block"
+  pairs: [[spi, guided], [spi, guided_perm_bin], [guided, guided_perm_bin], [guided, guided_perm_pixel],
+          [guided, guided_perm_block], [spi, spi_lam], [guided, spi_lam], [spi_first, spi_perm_bin], [spi, blur], [guided, blur]]
+  heatmap_images: 3
+  signal: {n_images: 6, sizes: [24], locations: [inside, outside], B_frac: 0.5, inside_min: 0.8, outside_max: 0.05,
+           min_denominator: 0.05, tries: 400}
+
 debug:
+  e5: {n_images: 2, ig_steps: 16, blur_steps: 12, guided_steps: 16, spi_paths: 4, spi_perm_paths: 2, lam_paths: 2,
+       perm_kinds: [bin, block], block: 56, heatmap_images: 1, signal: {n_images: 1, locations: [inside]}}
   cross:
     gate: {n_images: 1, spi_paths: 3, M: [1, 2, 4], ig_steps: 16,
            toy: {N_fine: 128, N: [16, 64], paths: 30, w_points: 512}}

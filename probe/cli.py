@@ -15,6 +15,8 @@ python -m probe [--config config.yaml] [--debug] [--device cuda] <lệnh>
   cross-e4c    E4c: quét mức lệch nhịp (SPI α)
   cross-report CROSS_REPORT.md + đồ thị từ CSV đã có
   cross        cross-gate → cross-e4 → cross-e4c → cross-report
+  e5           E5: residual avoidance, hoán vị lịch trình Guided, đường λ, tín hiệu → E5_REPORT.md
+  e5-report    E5_REPORT.md + đồ thị từ CSV đã có
 
 Kết quả: <local.out>[_debug]/pilot/. Chạy lại sẽ bỏ qua ảnh đã có trong cache (cùng hash config).
 """
@@ -33,13 +35,21 @@ def main(argv=None) -> None:
     ap.add_argument("--device", default=None)
     ap.add_argument("cmd", choices=["estimate", "conv", "main", "report", "all",
                                     "mech-e1", "mech-e23", "mech-report", "mech",
-                                    "cross-gate", "cross-e4", "cross-e4c", "cross-report", "cross"])
+                                    "cross-gate", "cross-e4", "cross-e4c", "cross-report", "cross", "e5", "e5-report"])
     args = ap.parse_args(argv)
     cfg = C.load(args.config, debug=args.debug)
 
     if args.cmd == "report":
         from .report import write
         write(C.out_dir(cfg, "pilot"), cfg)
+        return
+    if args.cmd.startswith("e5"):
+        from . import e5 as E5
+        from .e5_report import write as ewrite
+        if args.cmd == "e5":
+            from .pilot import Ctx
+            E5.run(Ctx(cfg, args.device))
+        ewrite(E5.e5_out(cfg), cfg)
         return
     if args.cmd.startswith("cross"):
         from . import cross as X

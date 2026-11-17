@@ -369,3 +369,50 @@ def test_exposure_linear_and_state():
     P, _ = strat_points(Xl, 2, generator(14, "cpu"))
     _, G = fg(fn, P, 64)
     assert float(exposure(G, Xl, 2, 1.0)["dist"].abs().max()) < 1e-9          # đường thẳng: khoảng cách 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E5: lịch trình, hoán vị, hình học
+# ─────────────────────────────────────────────────────────────────────────────
+
+from probe.e5 import geom_dist, perm_index, permute, schedule, sim  # noqa: E402
+
+
+@pytest.mark.parametrize("kind", ["bin", "pixel", "block"])
+def test_permutation_valid(kind):
+    torch.manual_seed(10)
+    x0 = torch.zeros(1, 3, 32, 32, dtype=F64)
+    x = torch.rand(1, 3, 32, 32, dtype=F64)
+    x[0, 1, :4, :4] = 0                                             # một số phần tử Δx = 0
+    dx = x - x0
+    Z = cum_nodes(spi_increments(3.0, 10, dx.shape[1:], generator(15, "cpu")))
+    X = x0 + Z * dx
+    Zs = schedule(X, x0, dx)
+    assert torch.allclose(x0 + Zs * dx, X, atol=1e-12)
+    ix = perm_index(kind, dx, torch.Generator().manual_seed(1), nbins=5, block=8)
+    assert torch.equal(ix.sort().values, torch.arange(ix.numel()))   # là một hoán vị
+    Xp = x0 + permute(Zs, ix) * dx
+    assert torch.allclose(Xp[0], x0[0]) and torch.allclose(Xp[-1], x[0])
+    assert bool((Xp[1:] - Xp[:-1]).mul(dx.sign()).ge(-1e-12).all())  # đơn điệu từng toạ độ
+    if kind == "bin":
+        n = 32 * 32
+        assert torch.equal(ix // n, torch.arange(3 * n) // n)          # không đổi kênh
+
+
+def test_geom_dist_linear_in_lambda():
+    x0 = torch.zeros(1, 3, 8, 8, dtype=F64)
+    x = torch.rand(1, 3, 8, 8, dtype=F64) + 0.1
+    Zs = cum_nodes(spi_increments(3.0, 16, x.shape[1:], generator(16, "cpu")))
+    t = torch.linspace(0, 1, 17, dtype=F64).view(-1, 1, 1, 1)
+    d1 = geom_dist(x0 + Zs * (x - x0))
+    for lam in (0.0, 0.3, 0.7):
+        assert abs(geom_dist(x0 + ((1 - lam) * t + lam * Zs) * (x - x0)) - lam * d1) < 1e-10
+    assert geom_dist(straight_nodes(x, x0, 9)) < 1e-12
+
+
+def test_sim_uniform_scaling_confound():
+    torch.manual_seed(11)
+    Wref = torch.rand(16, 16, dtype=F64) + 0.1
+    a = sim(0.4 * Wref, 0.8 * Wref, Wref, Wref, Wref)
+    assert a["spearman_avoided_raw"] > 0.999                        # confound: giảm đều vẫn cho tương quan 1
+    assert abs(a["c_m"] - 0.4) < 1e-12 and abs(a["c_n"] - 0.8) < 1e-12
