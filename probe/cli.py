@@ -19,6 +19,8 @@ python -m probe [--config config.yaml] [--debug] [--device cuda] <lệnh>
   e5-report    E5_REPORT.md + đồ thị từ CSV đã có
   e6           E6: A (cô lập gradient guidance, K=1) + B (topology chia sẻ lịch trình) → E6_REPORT.md
   e6-report    E6_REPORT.md + đồ thị từ CSV đã có
+  e7           E7: nhóm đồng bộ cùng cỡ (block vs random), độ bền theo N, Guided ở cầu phương dày → E7_REPORT.md
+  e7-report    E7_REPORT.md + đồ thị từ CSV đã có
 
 Kết quả: <local.out>[_debug]/pilot/. Chạy lại sẽ bỏ qua ảnh đã có trong cache (cùng hash config).
 """
@@ -38,13 +40,21 @@ def main(argv=None) -> None:
     ap.add_argument("cmd", choices=["estimate", "conv", "main", "report", "all",
                                     "mech-e1", "mech-e23", "mech-report", "mech",
                                     "cross-gate", "cross-e4", "cross-e4c", "cross-report", "cross", "e5", "e5-report",
-                                    "e6", "e6-report"])
+                                    "e6", "e6-report", "e7", "e7-report"])
     args = ap.parse_args(argv)
     cfg = C.load(args.config, debug=args.debug)
 
     if args.cmd == "report":
         from .report import write
         write(C.out_dir(cfg, "pilot"), cfg)
+        return
+    if args.cmd.startswith("e7"):
+        from . import e7 as E7
+        from .e7_report import write as w7
+        if args.cmd == "e7":
+            from .pilot import Ctx
+            E7.run(Ctx(cfg, args.device))
+        w7(E7.e7_out(cfg), cfg)
         return
     if args.cmd.startswith("e6"):
         from . import e6 as E6

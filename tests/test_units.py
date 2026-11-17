@@ -452,3 +452,46 @@ def test_transfer_rank_matching():
         kd = int(torch.argmax(ad[c]).item())
         assert torch.equal(Zt[:, c].flatten(1)[:, k], Zd[:, c].flatten(1)[:, kd])      # hạng cao nhất ↔ hạng cao nhất
         assert torch.equal(Zt[:, c].flatten(1).sort(1).values, Zd[:, c].flatten(1).sort(1).values)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E7: nhóm cùng cỡ; phản ví dụ giải tích (cùng biên, khác phụ thuộc → khác attribution)
+# ─────────────────────────────────────────────────────────────────────────────
+
+from probe.e7 import group_labels  # noqa: E402
+
+
+@pytest.mark.parametrize("kind,size", [("block4", 16), ("rand16", 16), ("block8", 64), ("rand64", 64)])
+def test_group_labels_equal_size(kind, size):
+    lab, n = group_labels(kind, (3, 32, 32), torch.Generator().manual_seed(2))
+    assert n == 32 * 32 // size
+    counts = torch.bincount(lab, minlength=n)
+    assert torch.all(counts == 3 * size)                                      # mỗi nhóm: size pixel × 3 kênh
+    assert torch.equal(lab[:1024], lab[1024:2048]) and torch.equal(lab[:1024], lab[2048:])   # 3 kênh chung nhóm
+
+
+def test_rand_groups_are_spatially_scattered():
+    lab, _ = group_labels("rand16", (1, 32, 32), torch.Generator().manual_seed(3))
+    g = lab.view(32, 32)
+    same_right = float((g[:, 1:] == g[:, :-1]).float().mean())
+    lab_b, _ = group_labels("block4", (1, 32, 32), torch.Generator().manual_seed(3))
+    gb = lab_b.view(32, 32)
+    assert same_right < 0.05 and float((gb[:, 1:] == gb[:, :-1]).float().mean()) > 0.7
+
+
+def test_shared_vs_independent_schedule_counterexample():
+    """F = z1² z2, (0,0) → (1,1): chung lịch trình (đường chéo) → (2/3, 1/3); độc lập (bật lần lượt, trung bình hai thứ tự) → (1/2, 1/2)."""
+    fn = lambda Z: (Z[:, 0] ** 2 * Z[:, 1]).flatten(1).sum(1)
+    from probe.mechanism import aw, strat_points
+    from probe.quad import fg
+
+    def A_of(X):
+        P, _ = strat_points(X, 64, generator(20, "cpu"))
+        _, G = fg(fn, P, 4096)
+        return aw(G, X[1:] - X[:-1], 64)[0].flatten()
+
+    diag = torch.tensor([[0.0, 0.0], [1.0, 1.0]], dtype=F64).view(2, 2, 1, 1)
+    assert torch.allclose(A_of(diag), torch.tensor([2 / 3, 1 / 3], dtype=F64), atol=2e-3)
+    o1 = torch.tensor([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]], dtype=F64).view(3, 2, 1, 1)
+    o2 = torch.tensor([[0.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=F64).view(3, 2, 1, 1)
+    assert torch.allclose((A_of(o1) + A_of(o2)) / 2, torch.tensor([0.5, 0.5], dtype=F64), atol=2e-3)

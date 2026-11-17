@@ -11,7 +11,7 @@ import os
 import torch
 import yaml
 
-UNHASHED = ("local", "debug", "mechanism", "cross", "e5", "e6")    # mechanism có hash riêng (mechanism.py), không làm mất cache pilot
+UNHASHED = ("local", "debug", "mechanism", "cross", "e5", "e6", "e7")    # mechanism có hash riêng (mechanism.py), không làm mất cache pilot
 
 
 def _merge(base: dict, over: dict) -> dict:

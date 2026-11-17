@@ -157,7 +157,17 @@ e6:
   A: {N: 128, M: 4, perm_seeds: 6, perm_bins: 10, donors: 2, spi_paths: 4}
   B: {N: 64, M: 4, paths: 4, kinds: [indep, rgb, block4, block16, block56, global]}
 
+# E7: nhóm đồng bộ cùng cỡ — bố trí không gian hay số/cỡ nhóm (hash riêng; exploratory trên 16 ảnh pilot)
+e7:
+  n_images: 16
+  S: {N: 64, M: 4, paths: 4, kinds: [indep, rgb, block4, rand16, block16, rand256, global]}
+  Njump: {n_images: 6, N: 256, M: 2, paths: 2, kinds: [indep, block4, rand16]}
+  Q: {n_images: 6, N: 128, M_hi: 16, M_lo: 4, perm_seeds: 4, donors: 2}
+
 debug:
+  e7: {n_images: 1, S: {N: 8, M: 2, paths: 2, kinds: [indep, rgb, block4, rand16, global]},
+       Njump: {n_images: 1, N: 16, M: 2, paths: 1, kinds: [indep, block4]},
+       Q: {n_images: 1, N: 16, M_hi: 4, M_lo: 2, perm_seeds: 2, donors: 1}}
   e6: {n_images: 1, A: {N: 16, M: 2, perm_seeds: 2, donors: 1, spi_paths: 2},
        B: {N: 8, M: 2, paths: 2, kinds: [indep, rgb, block56, global]}}
   e5: {n_images: 2, ig_steps: 16, blur_steps: 12, guided_steps: 16, spi_paths: 4, spi_perm_paths: 2, lam_paths: 2,
