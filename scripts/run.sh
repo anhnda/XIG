@@ -30,10 +30,12 @@
 #   e10        E10 trên ảnh fresh, tiền đăng ký → runs_probe/e10_fresh/E10_REPORT.md ;  e10-report: dựng lại (DEBUG=1 cho debug)
 #   e11-debug  E11 ở chế độ debug
 #   e11        E11: LIG Phase 1 trên mẫu đường cho trước → runs_probe/e11_<split>/E11_REPORT.md ;  e11-report: dựng lại
+#   e12-debug  E12 ở chế độ debug (1 ảnh pilot)
+#   e12        E12 trên ảnh fresh, tiền đăng ký → runs_probe/e12_fresh/E12_REPORT.md ;  e12-report: dựng lại
 # env: CFG=config.yaml, EXTRA="--device cuda:1"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report|mech-debug|mech|mech-e1|mech-e23|mech-report|cross-debug|cross|cross-gate|cross-e4|cross-e4c|cross-e4d|cross-e4d-debug|cross-report|e5-debug|e5|e5-report|e6-debug|e6|e6-report|e7-debug|e7|e7-report|e8-debug|e8|e8-report|e9-debug|e9|e9-report|ocs-debug|ocs|ocs-report|e10-debug|e10|e10-report|e11-debug|e11|e11-report}
+STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report|mech-debug|mech|mech-e1|mech-e23|mech-report|cross-debug|cross|cross-gate|cross-e4|cross-e4c|cross-e4d|cross-e4d-debug|cross-report|e5-debug|e5|e5-report|e6-debug|e6|e6-report|e7-debug|e7|e7-report|e8-debug|e8|e8-report|e9-debug|e9|e9-report|ocs-debug|ocs|ocs-report|e10-debug|e10|e10-report|e11-debug|e11|e11-report|e12-debug|e12|e12-report}
 CFG=${CFG:-config.yaml}
 EXTRA=${EXTRA:-}
 PY="python -m probe --config $CFG $EXTRA"
@@ -76,5 +78,8 @@ case "$STAGE" in
   e11-debug) $PY --debug e11 ;;
   e11) $PY e11 ;;
   e11-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug e11-report; else $PY e11-report; fi ;;
+  e12-debug) $PY --debug e12 ;;
+  e12) $PY e12 ;;
+  e12-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug e12-report; else $PY e12-report; fi ;;
   *) echo "stage không biết: $STAGE"; exit 1 ;;
 esac

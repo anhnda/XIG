@@ -698,3 +698,32 @@ def test_e11_schedules(spec):
     Z = make_schedule(spec, 12, (3, 16, 16), generator(70, "cpu"), torch.Generator().manual_seed(1), cal)
     assert Z.shape == (13, 3, 16, 16) and torch.all(Z[0] == 0) and torch.allclose(Z[-1], torch.ones_like(Z[-1]))
     assert bool(((Z[1:] - Z[:-1]) >= -1e-12).all())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E12: R_nl bằng 0 với F affine (kể cả đường nhảy mạnh); cầu phương lồng nhau chính xác với F tuyến tính
+# ─────────────────────────────────────────────────────────────────────────────
+
+from probe.e12 import nested_stream, nonlinearity  # noqa: E402
+
+
+def test_rnl_affine_zero_nonlinear_positive():
+    x0 = torch.zeros(1, 3, 8, 8, dtype=F64)
+    x = torch.rand(1, 3, 8, 8, dtype=F64) + 0.2
+    Z = torch.tensor([0.0, 0.05, 0.05, 0.95, 1.0], dtype=F64).view(-1, 1, 1, 1)   # một bước nhảy 0.9
+    X = x0 + Z * (x - x0)
+    a = torch.randn(1, 3, 8, 8, dtype=F64)
+    r = nonlinearity(lambda Z: 2.0 + (a * Z).flatten(1).sum(1), X, 64)
+    assert r["R_nl"] < 1e-12 and r["jump"] > 0.85                              # output nhảy lớn nhưng không phi tuyến
+    r2 = nonlinearity(lambda Z: torch.tanh(3 * Z).flatten(1).sum(1) * Z[:, :1].flatten(1).sum(1), X, 64)
+    assert r2["R_nl"] > 1e-4
+
+
+def test_nested_stream_linear_exact():
+    a = torch.randn(1, 3, 4, 4, dtype=F64)
+    x0 = torch.zeros(1, 3, 4, 4, dtype=F64)
+    x = torch.rand(1, 3, 4, 4, dtype=F64) + 0.1
+    X = spi_nodes_from(spi_increments(3.0, 8, x.shape[1:], generator(81, "cpu")), x0, x - x0)
+    A = nested_stream(lin_fn(a), X, 8, [2, 4, 8], generator(82, "cpu"), generator(83, "cpu"), 64, max_points=16)
+    for M, Am in A.items():
+        assert torch.allclose(Am, (a * (x - x0))[0], atol=1e-12), M

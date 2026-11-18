@@ -32,6 +32,8 @@ python -m probe [--config config.yaml] [--debug] [--device cuda] <lệnh>
   e10-report   E10_REPORT.md từ CSV đã có
   e11          E11: LIG chỉ Phase 1 (tối ưu μ) trên mẫu đường SPI và biến thể cho trước → E11_REPORT.md
   e11-report   E11_REPORT.md từ CSV đã có
+  e12          E12: R_nl (phản ứng phi tuyến của mô hình trên đường) có dự đoán over-exploration gây hại? → E12_REPORT.md
+  e12-report   E12_REPORT.md từ CSV đã có
 
 Kết quả: <local.out>[_debug]/pilot/. Chạy lại sẽ bỏ qua ảnh đã có trong cache (cùng hash config).
 """
@@ -54,13 +56,21 @@ def main(argv=None) -> None:
                                     "e6", "e6-report", "e7", "e7-report",
                                     "e8", "e8-report", "e9", "e9-report",
                                     "ocs", "ocs-report", "e10", "e10-report",
-                                    "e11", "e11-report"])
+                                    "e11", "e11-report", "e12", "e12-report"])
     args = ap.parse_args(argv)
     cfg = C.load(args.config, debug=args.debug)
 
     if args.cmd == "report":
         from .report import write
         write(C.out_dir(cfg, "pilot"), cfg)
+        return
+    if args.cmd.startswith("e12"):
+        from . import e12 as E12
+        from .e12_report import write as w12
+        if args.cmd == "e12":
+            from .pilot import Ctx
+            E12.run(Ctx(cfg, args.device))
+        w12(E12.e12_out(cfg), cfg)
         return
     if args.cmd.startswith("e11"):
         from . import e11 as E11

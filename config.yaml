@@ -264,7 +264,27 @@ e11:
   insdel_steps: 50
   rule: {win_rate_min: 0.8, metrics_min: 2}
 
+# E12 — R_nl có dự đoán khi nào exploration quá mạnh gây hại? (hash riêng; ảnh fresh từ fresh_offset, sau OCS / E10 / E11;
+# lần chạy đầu ghi e12_prereg.json; sau đó KHÔNG sửa mục này)
+e12:
+  split: fresh
+  fresh_offset: 300
+  n_images: 40
+  N: 64
+  M: 4
+  K: 16
+  families: [dp]             # thêm lognormal (khớp D theo từng α) CHỈ khi R_nl đạt trường hợp 2
+  levels: {dp: [1, 10, 100, 1000], lognormal: [1, 10, 100, 1000]}
+  calib: {d: 20000, seed: 12}
+  per_path_insdel: true
+  insdel_bases: [blur, black]
+  insdel_steps: 50
+  gate: {n_images: 8, K: 4, M: [4, 8, 16, 32], M_hi: 32}
+  decision: {low_level: 1, ref_level: 10, metrics_min: 2, gate_tol: 0.01}
+
 debug:
+  e12: {split: pilot, n_images: 1, N: 8, M: 2, K: 4, levels: {dp: [1, 10]}, gate: {n_images: 1, K: 2, M: [2, 4], M_hi: 4},
+        insdel_steps: 10}
   e11: {n_images: 1, N: 8, K: 2, paths: [ig, "dp:10", smooth, "rgb:10"], calib: {d: 2000}, mu_iter: 50, insdel_steps: 10}
   e10: {split: pilot, n_images: 1, N: 8, M: 2, K_half: 2, gate: {n_images: 1, paths: 1, M_hi: 4}, calib: {d: 2000},
         stats: {bootstrap: 200}}
