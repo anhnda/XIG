@@ -18,6 +18,21 @@ bash scripts/run.sh pilot      # conv → main → report  → runs_probe/pilot/
 Bị ngắt thì chạy lại cùng lệnh: ảnh đã xong (cùng hash config) được bỏ qua. `bash scripts/run.sh report` dựng
 lại đồ thị + báo cáo từ CSV mà không chạy GPU.
 
+## P4 — Real-CNN Stochastic Path Sampling Benchmark
+
+```bash
+bash scripts/run.sh sampling-test      # unit test P4 + test cũ (CPU) → runs_probe/pilot/sampling/tests_report.txt
+bash scripts/run.sh sampling-debug     # 2 ảnh, N = 8, K ∈ {2,4} → runs_probe_debug/pilot/ATTR_PROBE_SAMPLING_REPORT.md
+bash scripts/run.sh sampling-estimate  # đo GPU, in phút từng khối + kế hoạch theo sampling.budget (không chạy)
+bash scripts/run.sh sampling-pilot     # ref → primary → khối phụ trong ngân sách → runs_probe/pilot/ATTR_PROBE_SAMPLING_REPORT.md
+bash scripts/run.sh sampling-report    # dựng lại thống kê/đồ thị/báo cáo từ CSV (DEBUG=1 cho thư mục debug)
+```
+
+Cấu hình ở mục `sampling:` của `config.yaml` (hash riêng theo khối, không làm mất cache P0–P3). Sampler: `probe/sampling.py`;
+runner: `probe/sampling_benchmark.py`; thống kê + báo cáo: `probe/sampling_report.py`; test: `tests/test_sampling.py`.
+Bị ngắt thì chạy lại cùng lệnh: (ảnh × khối × seed) đã xong được bỏ qua. Nếu ước tính phần chính vượt
+`sampling.budget.minutes × slack` thì chương trình dừng trước khi chạy (đặt `budget.enforce: false` để bỏ qua).
+
 ## Cấu trúc
 
 | file | nội dung |

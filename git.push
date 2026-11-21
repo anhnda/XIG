@@ -4,4 +4,4 @@ MESSAGE="${1:-Update}"
 
 git add .
 git commit -m "$MESSAGE"
-git push origin eval
+git push origin rd

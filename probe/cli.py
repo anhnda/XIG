@@ -34,6 +34,10 @@ python -m probe [--config config.yaml] [--debug] [--device cuda] <lệnh>
   e11-report   E11_REPORT.md từ CSV đã có
   e12          E12: R_nl (phản ứng phi tuyến của mô hình trên đường) có dự đoán over-exploration gây hại? → E12_REPORT.md
   e12-report   E12_REPORT.md từ CSV đã có
+  sampling           P4: Real-CNN Stochastic Path Sampling Benchmark (ref → primary → khối phụ trong ngân sách)
+                     → <out>/pilot/sampling/*.csv + <out>/pilot/ATTR_PROBE_SAMPLING_REPORT.md
+  sampling-estimate  P4: đo GPU, in ước tính phút từng khối và kế hoạch theo ngân sách (không chạy thí nghiệm)
+  sampling-report    P4: dựng lại thống kê, đồ thị, báo cáo từ CSV đã có (không chạy mô hình)
 
 Kết quả: <local.out>[_debug]/pilot/. Chạy lại sẽ bỏ qua ảnh đã có trong cache (cùng hash config).
 """
@@ -56,9 +60,20 @@ def main(argv=None) -> None:
                                     "e6", "e6-report", "e7", "e7-report",
                                     "e8", "e8-report", "e9", "e9-report",
                                     "ocs", "ocs-report", "e10", "e10-report",
-                                    "e11", "e11-report", "e12", "e12-report"])
+                                    "e11", "e11-report", "e12", "e12-report",
+                                    "sampling", "sampling-estimate", "sampling-report"])
     args = ap.parse_args(argv)
     cfg = C.load(args.config, debug=args.debug)
+
+    if args.cmd.startswith("sampling"):
+        from . import sampling_benchmark as SB
+        from .sampling_report import write as wsr
+        if args.cmd in ("sampling", "sampling-estimate"):
+            from .pilot import Ctx
+            SB.run(Ctx(cfg, args.device), estimate_only=args.cmd == "sampling-estimate")
+        if args.cmd != "sampling-estimate":
+            wsr(SB.sampling_out(cfg), cfg)
+        return
 
     if args.cmd == "report":
         from .report import write

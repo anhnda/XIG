@@ -282,8 +282,43 @@ e12:
   gate: {n_images: 8, K: 4, M: [4, 8, 16, 32], M_hi: 32}
   decision: {low_level: 1, ref_level: 10, metrics_min: 2, gate_tol: 0.01}
 
+# P4 — Real-CNN Stochastic Path Sampling Benchmark (hash riêng theo khối; không làm mất cache P0–P3 / E*).
+# S0 = đúng SPI hiện tại: α, N lấy từ paths.<spi_from> (không ghi đè được). Mọi đường tốn N·M lượt forward+backward.
+sampling:
+  spi_from: spi10
+  M: 1                       # điểm cầu phương phân tầng mỗi đoạn; M = 1 ≡ canon_rand (estimator canonical của P1–P3)
+  n_images: 16               # tiền tố split pilot (đúng 16 ảnh của P1 exp_a); không chọn ảnh theo kết quả
+  seeds: 4                   # ensemble độc lập mỗi (ảnh, phương pháp, K)
+  K: [2, 4, 8, 16]           # luỹ thừa của 2; các K là tiền tố của cùng ngân hàng đường (thiết kế cân bằng lồng nhau)
+  grid: 7                    # lưới patch chính 7×7 (patch 32×32 trên 224×224)
+  eta: 0.0                   # η của lượt chính: 0 = lịch trình thuần cấp patch
+  primary: [S0, S1, S2, S3, S4, S6]    # S6 = đối chứng cùng operator cho S2/S3/S4 (bắt buộc để tách "đổi operator" và "cân bằng")
+  reference:
+    enabled: true
+    K: 64                    # đường độc lập cho μ_ref mỗi operator (khoá riêng, không rò vào ensemble)
+    operators: [spi, patch]  # patch = lưới chính, η chính
+    quad_gate_paths: 4       # nhiễu cầu phương: cùng đường S0, thêm một bộ U độc lập
+  secondary:                 # thứ tự ưu tiên; chỉ chạy khi ước tính còn trong budget.secondary_minutes
+    - {name: controls, methods: [S5, S7]}
+    - {name: eta05, methods: [S6, S2, S4], eta: 0.5}
+    - {name: grid14, methods: [S6, S2, S4], grid: 14}
+  lime: {n_samples: 256, kernel_width: 0.25, ridge: 1.0, tau: 0.25}    # S7: prior thứ tự mềm (high-last); forward tính riêng
+  insdel_bases: [blur, black]
+  insdel_steps: 50
+  signed_ranking_secondary: true      # thêm InsDel xếp hạng theo Σ_c A (có dấu) ở K = K_max — phân tích PHỤ, có nhãn
+  overlap_tol: 0.125         # hai patch "chồng thời gian" nếu |τ_g − τ_h| < tol
+  locality: {n_null: 20}     # D3: số hoán vị cho mức nền
+  keep_seed_maps: false      # giữ bản đồ ensemble từng seed trong cache sau khi đã tổng hợp ảnh
+  budget: {minutes: 30, secondary_minutes: 30, slack: 1.25, enforce: true}
+  stats: {bootstrap: 10000, seed: 4, alpha: 0.05, min_effect: 0.01, min_images: 16, win_frac: 0.5}
+
 debug:
-  e12: {split: pilot, n_images: 1, N: 8, M: 2, K: 4, levels: {dp: [1, 10]}, gate: {n_images: 1, K: 2, M: [2, 4], M_hi: 4},
+  sampling: {n_images: 2, seeds: 2, K: [2, 4], insdel_steps: 10,
+             reference: {K: 8, quad_gate_paths: 2},
+             secondary: [{name: controls, methods: [S5, S7]}, {name: eta05, methods: [S6, S2, S4], eta: 0.5}],
+             lime: {n_samples: 32}, locality: {n_null: 2}, stats: {bootstrap: 200, min_images: 2},
+             budget: {enforce: false, secondary_minutes: 1000}}
+  e12:{split: pilot, n_images: 1, N: 8, M: 2, K: 4, levels: {dp: [1, 10]}, gate: {n_images: 1, K: 2, M: [2, 4], M_hi: 4},
         insdel_steps: 10}
   e11: {n_images: 1, N: 8, K: 2, paths: [ig, "dp:10", smooth, "rgb:10"], calib: {d: 2000}, mu_iter: 50, insdel_steps: 10}
   e10: {split: pilot, n_images: 1, N: 8, M: 2, K_half: 2, gate: {n_images: 1, paths: 1, M_hi: 4}, calib: {d: 2000},
