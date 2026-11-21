@@ -286,12 +286,27 @@ def _order_effect(Cp: torch.Tensor, tau_g: torch.Tensor, tau_h: torch.Tensor, mi
     return I
 
 
+def residualize_own_time(Cp: torch.Tensor, tau: torch.Tensor, degree: int = 3) -> torch.Tensor:
+    """Phần dư của C_g sau hồi quy (bình phương tối thiểu, qua các đường) lên đa thức bậc `degree` của τ_g.
+    Bắt buộc: credit của g phụ thuộc thời điểm kích hoạt của CHÍNH g, và "h trước g" kéo theo τ_g lớn hơn — không khử thì
+    hiệu ứng thời điểm của g bị đọc nhầm thành tác động của h (và mức nền hoán vị τ_h cũng mang nó)."""
+    n, P = tau.shape
+    R = torch.empty_like(Cp)
+    for j in range(P):
+        t = tau[:, j]
+        X = torch.stack([t ** p for p in range(degree + 1)], 1)
+        beta = torch.linalg.lstsq(X, Cp[:, j:j + 1]).solution
+        R[:, j] = Cp[:, j] - (X @ beta)[:, 0]
+    return R
+
+
 def order_effect_by_distance(Cp: torch.Tensor, tau: torch.Tensor, g: int, D: float, n_null: int, gen) -> list:
     """Cp (n, P) credit theo patch của từng đường độc lập, tau (n, P). Trả |I|/|D| trung bình theo khoảng cách Chebyshev,
-    kèm mức nền (hoán vị thời điểm của h giữa các đường, phá mọi liên hệ thứ tự)."""
+    I tính trên phần dư của C_g sau khi khử phụ thuộc vào τ_g, kèm mức nền (hoán vị thời điểm của h giữa các đường)."""
     Cp, tau = Cp.double().cpu(), tau.double().cpu()
     n, P = tau.shape
     dist = cheb(g)
+    Cp = residualize_own_time(Cp, tau, degree=min(3, max(0, n // 8 - 1)))
     I = _order_effect(Cp, tau, tau)
     nulls = []
     for _ in range(int(n_null)):

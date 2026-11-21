@@ -290,13 +290,28 @@ def test_T5_lime_recovers_linear_patch_model():
 
 
 def test_T5_order_effect_detects_planted_pair():
-    g, n = 3, 400
+    g, n = 3, 1000
     tau = torch.rand(n, g * g, generator=cgen(4), dtype=F64)
     Cp = torch.zeros(n, g * g, dtype=F64)
     Cp[:, 0] = (tau[:, 1] < tau[:, 0]).double()                             # credit của patch 0 phụ thuộc thứ tự với patch 1
     rows = SM.order_effect_by_distance(Cp, tau, g, 1.0, 5, cgen(5))
     assert [r["dist"] for r in rows] == [1, 2]
     assert rows[0]["abs_I_rel"] > 3 * rows[0]["null_abs_I_rel"]
+    # sau khi khử phụ thuộc vào τ_0 (E[C_0 | τ_0] = τ_0), chỉ còn cặp (0, 1): I[0,1] = 2/3, các cặp khác ≈ 0
+    R = SM.residualize_own_time(Cp, tau)
+    I = SM._order_effect(R, tau, tau)
+    assert float(I[0, 1]) == pytest.approx(2 / 3, abs=0.1)
+    assert abs(float(I[0, 3])) < 0.1 and abs(float(I[0, 8])) < 0.1
+
+
+def test_T5_order_effect_ignores_own_time_effect():
+    """Credit chỉ phụ thuộc thời điểm của CHÍNH patch (không có tương tác) → không được báo là tác động thứ tự."""
+    g, n = 3, 1000
+    tau = torch.rand(n, g * g, generator=cgen(6), dtype=F64)
+    Cp = 2 * tau - tau ** 3 + 0.1 * torch.randn(n, g * g, generator=cgen(7), dtype=F64)
+    rows = SM.order_effect_by_distance(Cp, tau, g, 1.0, 10, cgen(8))
+    for r in rows:
+        assert r["abs_I_rel"] < 2 * r["null_abs_I_rel"]
 
 
 def _cfg(debug=False):

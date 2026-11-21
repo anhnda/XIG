@@ -731,8 +731,10 @@ def write(out: str, cfg: dict) -> str:
                  f"|τ_g − τ_h| < {S['overlap_tol']}; S0/S1 ở cấp patch gần như đồng bộ (τ ≈ ½ do trung bình hoá) — đó là đặc điểm thật của SPI.\n")
         L.append(md(cvg[cvg.K.isin([min(Ks), Kmax])].groupby(["method", "K"])[cols].mean().reset_index()))
     if loc is not None and len(loc):
-        L.append("**D3 — proxy locality** từ các đường S6 (không tốn thêm truy vấn): |tác động thứ tự| = |E[C_g | h trước g] − E[C_g | h sau g]| / |D| "
-                 "theo khoảng cách Chebyshev, so với mức nền hoán vị. Đây KHÔNG phải độ mạnh tương tác thật (trộn nhiễu và thứ tự của các patch khác):\n")
+        L.append("**D3 — proxy locality** từ các đường S6 (không tốn thêm truy vấn): C̃_g = phần dư của credit patch g sau hồi quy lên đa thức "
+                 "bậc 3 của thời điểm kích hoạt của CHÍNH g (khử hiệu ứng 'kích hoạt muộn/sớm', vốn bị đọc nhầm thành tác động của h); "
+                 "|tác động thứ tự| = |E[C̃_g | h trước g] − E[C̃_g | h sau g]| / |D| theo khoảng cách Chebyshev, so với mức nền (hoán vị τ_h giữa "
+                 "các đường). Đây KHÔNG phải độ mạnh tương tác thật (còn trộn nhiễu và thứ tự của các patch khác):\n")
         L.append(md(loc.groupby(["block", "dist"])[["abs_I_rel", "null_abs_I_rel", "n_pairs"]].mean().reset_index()))
 
     # ── 10. pixel-level
