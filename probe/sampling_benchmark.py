@@ -258,9 +258,12 @@ def quality(E: Env, A: torch.Tensor, ref=None, curves: bool = False, signed: boo
 class Bank:
     """Sinh lịch trình theo khoá đường cho một (ảnh, seed, tag). tag 'ens' cho ensemble, 'ref' cho reference (khoá riêng)."""
 
-    def __init__(self, E: Env, r: int, tag: str):
+    def __init__(self, E: Env, r: int, tag: str, n_paths: int | None = None):
+        """n_paths: số đường tối đa của ngân hàng (mặc định K_max); bảng pha có next_pow2(n_paths) hàng."""
         self.E, self.r, self.tag = E, int(r), tag
         self.S = E.S
+        n = int(n_paths or E.S["Kmax"])
+        self.rows = 1 << max(0, (n - 1).bit_length())                # luỹ thừa của 2 ≥ n (thiết kế cân bằng cần 2^m)
         self._phase = {}
 
     def phase(self, design: str, grid: int) -> torch.Tensor:
@@ -268,9 +271,9 @@ class Bank:
         if key not in self._phase:
             E, S = self.E, self.S
             P = grid * grid
-            common = SM.common_phase_noise(P, S["Kmax"], E.cgen("P4phase-common", self.tag, self.r, E.image, grid))
+            common = SM.common_phase_noise(P, self.rows, E.cgen("P4phase-common", self.tag, self.r, E.image, grid))
             lr = E.lime[grid]["rank"] if design == "lime" else None
-            phi, _ = SM.phase_design(design, P, S["Kmax"], E.cgen("P4phase", design, self.tag, self.r, E.image, grid),
+            phi, _ = SM.phase_design(design, P, self.rows, E.cgen("P4phase", design, self.tag, self.r, E.image, grid),
                                      g=grid, common=common, lime_rank=lr, tau=float(S["lime"]["tau"]))
             self._phase[key] = phi
         return self._phase[key]
@@ -518,7 +521,7 @@ def run_reference(E: Env) -> dict:
     S = E.S
     rc = S["reference"]
     Kref = int(rc["K"])
-    bank = Bank(E, 0, "ref")
+    bank = Bank(E, 0, "ref", n_paths=Kref)
     t0, n0, f0 = time.time(), Counter.n, SM.FwdCounter.n
     refs, rows, heat = {}, [], {}
     for op_kind in rc["operators"]:
