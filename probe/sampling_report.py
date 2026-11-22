@@ -577,6 +577,129 @@ def quad_section(out: str, S: dict, st: dict, qd, qp) -> tuple[list, list]:
     return L, files
 
 
+def pathscore_section(out: str, S: dict, st: dict, ps, pp) -> tuple[list, list]:
+    """Thí nghiệm D — InsDel của từng đường trong K đường SPI."""
+    import pandas as pd
+    L = ["## D. InsDel của từng đường trong K đường (best / worst so với trung bình)\n"]
+    if ps is None or not len(ps):
+        L.append("_Thí nghiệm D **chưa chạy** — `bash scripts/run.sh sampling-pathscore`._\n")
+        return L, []
+    B, seed = int(st.get("bootstrap", 10000)), int(st.get("seed", 4))
+    bases = [b for b in S["insdel_bases"] if b in set(ps.base)]
+    Kp = int(ps.K.iloc[0])
+    num = [c for c in ps.columns if c not in ("image", "method", "seed", "base", "best_path", "worst_path", "K")
+           and pd.api.types.is_numeric_dtype(ps[c])]
+    pim = ps.groupby(["method", "base", "image"])[num].mean().reset_index()          # trung bình seed trong ảnh trước
+    n_img, n_seed = int(ps.image.nunique()), int(ps.seed.nunique())
+    L.append(f"{n_img} ảnh × {n_seed} seed, K = {Kp} đường mỗi (ảnh, seed); mỗi đường là một attribution canonical RIÊNG (không lấy trung "
+             "bình), chấm InsDel cùng giao thức với mục 6 (hạng Σ_c|A|). Ensemble = trung bình K đường đó (ở seed 0, K = K_max của lượt chính, "
+             "đó chính là S0 của lượt chính). Đơn vị thống kê: ảnh (trung bình seed trước), CI 95% bootstrap theo ảnh.\n")
+    L.append("**Lưu ý:** 'đường tốt nhất' ở đây được chọn bằng CHÍNH InsDel trên chính ảnh đó (oracle) — đây là cận trên lạc quan của việc "
+             "chọn đường, không phải một phương pháp. Để kiểm tra mức lạc quan: chọn theo giao thức mask này, chấm theo giao thức kia.\n")
+
+    def ci_row(df, col):
+        v = df[col].dropna().values
+        s = boot_stats(v, B, seed) if len(v) else {"mean": np.nan, "lo95": np.nan, "hi95": np.nan, "median": np.nan}
+        return s["mean"], s.get("lo95", np.nan), s.get("hi95", np.nan), s.get("median", np.nan), (float(np.max(v)) if len(v) else np.nan)
+
+    rows = []
+    for (m, b), g in pim.groupby(["method", "base"]):
+        r = {"method": m, "base": b, "n_images": len(g)}
+        for col in ("mean_path", "ens", "sd_path", "best_minus_mean", "mean_minus_worst", "range", "ens_minus_mean", "best_minus_ens",
+                    "frac_paths_above_ens", "ins_best_minus_mean", "del_best_minus_mean"):
+            if col in g:
+                mu, lo, hi, med, mx = ci_row(g, col)
+                r[col] = mu
+                if col in ("best_minus_mean", "mean_minus_worst", "ens_minus_mean", "best_minus_ens"):
+                    r[f"{col}_lo95"], r[f"{col}_hi95"], r[f"{col}_median"], r[f"{col}_max"] = lo, hi, med, mx
+        rows.append(r)
+    t1 = pd.DataFrame(rows)
+    L.append("**Độ chênh giữa các đường** (InsDel = AUC_ins − AUC_del; trung bình qua ảnh):\n")
+    L.append(md(t1, [c for c in ("method", "base", "n_images", "mean_path", "sd_path", "best_minus_mean", "best_minus_mean_lo95",
+                                 "best_minus_mean_hi95", "best_minus_mean_median", "best_minus_mean_max", "mean_minus_worst",
+                                 "mean_minus_worst_lo95", "mean_minus_worst_hi95", "mean_minus_worst_max", "range") if c in t1]))
+    L.append("**So với ensemble K đường** (`ens_minus_mean` = lợi ích của việc lấy trung bình so với một đường điển hình; "
+             "`best_minus_ens` = đường oracle tốt nhất hơn ensemble bao nhiêu; `frac_paths_above_ens` = tỷ lệ đường đơn vượt ensemble):\n")
+    L.append(md(t1, [c for c in ("method", "base", "ens", "ens_minus_mean", "ens_minus_mean_lo95", "ens_minus_mean_hi95",
+                                 "best_minus_ens", "best_minus_ens_lo95", "best_minus_ens_hi95", "frac_paths_above_ens",
+                                 "ins_best_minus_mean", "del_best_minus_mean") if c in t1]))
+    bo = [c for c in pim.columns if c.startswith("bestof")]
+    if bo:
+        bo = sorted(bo, key=lambda c: int(c[6:].split("_")[0]))
+        L.append("**Best-of-m** (kỳ vọng InsDel của đường tốt nhất trong m đường rút ngẫu nhiên từ K, trừ trung bình đường — tính chính xác "
+                 "theo thống kê thứ tự; m = 1 ≡ 0):\n")
+        L.append(md(pim.groupby(["method", "base"])[bo].mean().reset_index()))
+    sel = [c for c in pim.columns if c.startswith("select_here_eval_") or c.startswith("spearman_paths_vs_")]
+    if sel:
+        L.append("**Chọn ở giao thức này, chấm ở giao thức kia** (cột `base` = giao thức dùng để chọn): nếu lợi ích ≈ 0 thì 'đường tốt nhất' "
+                 "chủ yếu là khớp vào metric/ảnh cụ thể, không phải đường tốt thật. `spearman_paths_vs_*` = tương quan hạng điểm của K đường "
+                 "giữa hai giao thức.\n")
+        L.append(md(pim.groupby(["method", "base"])[sel].mean().reset_index()))
+    pxs = [c[4:] for c in pim.columns if c.startswith("rho_")]
+    if pxs:
+        prow = []
+        for (m, b), g in pim.groupby(["method", "base"]):
+            orc = ci_row(g, "best_minus_mean")[0]
+            for px in pxs:
+                rm, rlo, rhi, _, _ = ci_row(g, f"rho_{px}")
+                sm, slo, shi, _, _ = ci_row(g, f"select_{px}_minus_mean") if f"select_{px}_minus_mean" in g else (np.nan,) * 5
+                prow.append({"method": m, "base": b, "proxy": px, "rho_mean": rm, "rho_lo95": rlo, "rho_hi95": rhi,
+                             "select_gain": sm, "select_lo95": slo, "select_hi95": shi, "oracle_gain": orc,
+                             "frac_of_oracle": sm / orc if orc and np.isfinite(orc) and orc != 0 else np.nan})
+        L.append("**Proxy chọn đường không tốn thêm forward** (hướng chọn đặt trước trong code: loo_cos/loo_spearman/top_mass → lớn nhất; "
+                 "abs_resid_rel/l1_rel/d_hat → nhỏ nhất). `rho` = Spearman giữa proxy và InsDel của K đường trong một ảnh (trung bình qua ảnh); "
+                 "`select_gain` = InsDel của đường proxy chọn − trung bình đường; `frac_of_oracle` = phần của lợi ích oracle mà proxy đạt được:\n")
+        L.append(md(pd.DataFrame(prow)))
+    files = []
+    try:
+        plt = _plt()
+        fig, ax = plt.subplots(len(bases), 2, figsize=(12, 3.6 * len(bases)), squeeze=False)
+        for i, b in enumerate(bases):
+            if pp is not None and len(pp) and f"insdel_{b}" in pp:
+                q = pp[(pp.method == pp.method.iloc[0]) & (pp.seed == pp.seed.min())]
+                mean_im = q.groupby("image")[f"insdel_{b}"].transform("mean")
+                q = q.assign(dev=q[f"insdel_{b}"] - mean_im)
+                order = q.groupby("image").dev.std().sort_values().index.tolist()
+                for j, im in enumerate(order):
+                    v = q[q.image == im].dev.values
+                    ax[i, 0].scatter(np.full(len(v), j), v, s=12, color=COLORS["S0"], alpha=0.7, edgecolor="white", linewidth=0.6)
+                    e = ps[(ps.image == im) & (ps.base == b) & (ps.seed == q.seed.iloc[0]) & (ps.method == q.method.iloc[0])]
+                    if len(e):
+                        ax[i, 0].scatter([j], e.ens_minus_mean.values[:1], marker="D", s=26, color=COLORS["S1"], zorder=3,
+                                         label="ensemble − trung bình" if j == 0 else None)
+                ax[i, 0].axhline(0, color=MUTED, lw=0.8)
+                ax[i, 0].set_xticks(range(len(order))); ax[i, 0].set_xticklabels(order, rotation=90, fontsize=6)
+                ax[i, 0].set_ylabel(f"InsDel đường − trung bình ({b})")
+                ax[i, 0].legend(fontsize=7)
+            g = pim[pim.base == b]
+            if bo:
+                ms = [int(c[6:].split("_")[0]) for c in bo]
+                for m in dict.fromkeys(g.method):
+                    gm = g[g.method == m]
+                    mu = [gm[c].mean() for c in bo]
+                    ax[i, 1].plot(ms, mu, marker="o", color=COLORS.get(m, MUTED), label=f"{m}: best-of-m − trung bình")
+                ens_mu = g.ens_minus_mean.mean()
+                ax[i, 1].axhline(ens_mu, color=COLORS["S1"], ls="--", lw=1.2, label=f"ensemble K = {Kp} − trung bình")
+                ax[i, 1].set_xscale("log", base=2); ax[i, 1].set_xlabel("m (số đường để chọn, oracle)")
+                ax[i, 1].set_ylabel(f"ΔInsDel ({b})"); ax[i, 1].legend(fontsize=7)
+        fig.suptitle("D — phân tán InsDel giữa các đường SPI (trái: mỗi cột một ảnh, seed đầu; phải: oracle best-of-m vs ensemble)", fontsize=9)
+        f = os.path.join(out, "sampling_pathscore.png")
+        fig.tight_layout(); fig.savefig(f); plt.close(fig)
+        files.append(f)
+    except Exception as ex:
+        print(f"[sampling plots] pathscore: {type(ex).__name__}: {ex}")
+    # đọc nhanh
+    for b in bases:
+        g = t1[t1.base == b]
+        for _, r in g.iterrows():
+            L.append(f"- {r.method}, {b}: đường tốt nhất hơn trung bình {fmt(r.get('best_minus_mean'))} "
+                     f"[{fmt(r.get('best_minus_mean_lo95'))}, {fmt(r.get('best_minus_mean_hi95'))}], đường kém nhất thấp hơn trung bình "
+                     f"{fmt(r.get('mean_minus_worst'))} [{fmt(r.get('mean_minus_worst_lo95'))}, {fmt(r.get('mean_minus_worst_hi95'))}]; "
+                     f"ensemble hơn trung bình đường {fmt(r.get('ens_minus_mean'))}, đường oracle hơn ensemble {fmt(r.get('best_minus_ens'))}.")
+    L.append("")
+    return L, files
+
+
 def heat_and_curves(out: str, pi, curves, heat, bases, Kmax, cases: list) -> list:
     """Bản đồ (seed 0, K_max) và đường cong insertion/deletion (prob, logit) cho các ảnh thắng / thua."""
     files = []
@@ -715,6 +838,7 @@ def write(out: str, cfg: dict) -> str:
         "per_seed", "per_image", "coverage", "covariance", "covariance_pairs", "budget", "paths", "locality", "curves", "ref",
         "lime", "images"))
     qd, qpth, cvp = rd("sampling_quad"), rd("sampling_quad_paths"), rd("sampling_coverage_pixel")
+    pss, psp = rd("sampling_pathscore"), rd("sampling_pathscore_paths")
     hp = os.path.join(out, "sampling_heatmaps.pt")
     heat = torch.load(hp, weights_only=False) if os.path.exists(hp) else {}
     bases = list(S["insdel_bases"])
@@ -729,6 +853,8 @@ def write(out: str, cfg: dict) -> str:
                  "trong báo cáo này là kết quả thật._\n")
         Lq, _ = quad_section(out, S, st, qd, qpth)
         L += Lq
+        Ld, _ = pathscore_section(out, S, st, pss, psp)
+        L += Ld
         L.append("## Tests\n")
         L.append(_tests_text(out, cfg))
         with open(rp, "w") as fh:
@@ -1121,6 +1247,9 @@ def write(out: str, cfg: dict) -> str:
     Lq, fq = quad_section(out, S, st, qd, qpth)
     L += Lq
     files += fq
+    Ld, fd = pathscore_section(out, S, st, pss, psp)
+    L += Ld
+    files += fd
 
     L.append("## Tệp\n")
     for f in sorted(os.listdir(out)):

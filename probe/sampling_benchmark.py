@@ -96,6 +96,9 @@ def settings(cfg: dict) -> dict:
                 raise SystemExit(f"phương pháp không biết: {m}")
             if m in ("S0", "S1"):
                 raise SystemExit("S0/S1 không phụ thuộc lưới/η — chỉ đặt trong primary")
+    for m in (s.get("path_scores") or {}).get("methods", []):
+        if m not in ALL_METHODS:
+            raise SystemExit(f"path_scores: phương pháp không biết: {m}")
     qc = s.get("quad_check") or {}
     if qc:
         if any(int(m) < 1 for m in qc.get("M", [])):
@@ -172,6 +175,7 @@ def digests(cfg: dict, S: dict) -> dict:
     for b in blocks(S):
         d[b["name"]] = _h({"base": base, "block": b, "ref": S["reference"]})     # dòng RMSE phụ thuộc ref
     d["quad"] = _h({"base": base, "quad": S.get("quad_check"), "ref": S["reference"]})
+    d["pathscore"] = _h({"base": base, "pathscore": S.get("path_scores"), "proxies": PROXIES})
     return d
 
 
@@ -745,6 +749,170 @@ def run_quad(ctx: Ctx) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# thí nghiệm D — InsDel của TỪNG đường trong K đường (độ phân tán, best/worst so với trung bình, proxy chọn đường)
+# ─────────────────────────────────────────────────────────────────────────────
+
+PROXIES = {          # proxy tính được KHÔNG cần thêm forward; hướng chọn đặt trước (không chọn theo kết quả)
+    "loo_cos": "max",            # cosine với trung bình K−1 đường còn lại (đồng thuận)
+    "loo_spearman": "max",       # Spearman Σ_c|A| với trung bình K−1 đường còn lại
+    "abs_resid_rel": "min",      # |ΣA − D| / |D| (completeness của riêng đường)
+    "top_mass": "max",           # tỷ lệ Σ_c|A| nằm trong top `top_frac` pixel (độ tập trung)
+    "l1_rel": "min",             # ‖A‖₁ / |D| (ít khử lẫn nhau giữa dương/âm)
+    "d_hat": "min",              # ∫(Z − t)² — mức exploration của đường (gần IG hơn)
+}
+
+
+def best_of_m(scores, m: int) -> float:
+    """E[max của m đường lấy ngẫu nhiên không hoàn lại từ K đường] — chính xác theo thống kê thứ tự."""
+    x = sorted(scores)
+    n = len(x)
+    if m >= n:
+        return x[-1]
+    tot = math.comb(n, m)
+    return sum(x[i] * math.comb(i, m - 1) for i in range(m - 1, n)) / tot
+
+
+def path_scores(E: Env) -> dict:
+    S = E.S
+    pc = S["path_scores"]
+    Kp, R = int(pc["K"]), int(pc["seeds"])
+    tf = float(pc.get("top_frac", 0.05))
+    grid, eta, N = S["grid"], S["eta"], S["N"]
+    steps = int(S["insdel_steps"])
+    rows = defaultdict(list)
+    t0, n0, f0 = time.time(), Counter.n, SM.FwdCounter.n
+    kk = max(1, int(tf * E.H * E.W))
+    for r in range(R):
+        bank = Bank(E, r, "ens", n_paths=Kp)          # cùng khoá với ensemble chính ⇒ 16 đường đầu = đúng các đường S0 đã dùng
+        for m in pc.get("methods", ["S0"]):
+            keys = method_paths(m, grid, eta, Kp)
+            info = [bank.eval_path(k_) for k_ in keys]
+            As = torch.stack([p["A"] for p in info])                                  # (K, C, H, W) float64
+            tot = As.sum(0)
+            ens = tot / Kp
+            q_ens = {b: SM.insdel_full(E.ctx.bb, E.cls, E.x, base, ens.float(), steps, E.ins_batch) for b, base in E.bases.items()}
+            per = []
+            for i, p in enumerate(info):
+                A = As[i]
+                loo = (tot - A) / max(Kp - 1, 1)
+                am = A.abs().sum(0).flatten()
+                row = {"image": E.image, "method": m, "seed": r, "path": i, "key": kstr(keys[i]),
+                       "sumA": float(A.sum()), "D": E.D,
+                       "abs_resid_rel": abs(float(A.sum()) - E.D) / abs(E.D) if E.D else float("nan"),
+                       "l1_rel": float(A.abs().sum()) / abs(E.D) if E.D else float("nan"),
+                       "top_mass": float(am.topk(kk).values.sum() / am.sum().clamp_min(1e-300)),
+                       "loo_cos": _cos(A, loo), "loo_spearman": spearman(A.float(), loo.float()),
+                       "d_hat": p["d_hat"], "iou": iou(A.float(), E.mask, E.perm)}
+                for b, base in E.bases.items():
+                    q = SM.insdel_full(E.ctx.bb, E.cls, E.x, base, A.float(), steps, E.ins_batch)
+                    row[f"ins_{b}"], row[f"del_{b}"], row[f"insdel_{b}"] = q["ins"], q["del"], q["diff"]
+                per.append(row)
+            rows["pathscore_paths"] += per
+            for b in E.bases:
+                s = [x[f"insdel_{b}"] for x in per]
+                mu = sum(s) / Kp
+                sd = math.sqrt(sum((v - mu) ** 2 for v in s) / max(Kp - 1, 1))
+                ib, iw = max(range(Kp), key=lambda i: s[i]), min(range(Kp), key=lambda i: s[i])
+                summ = {"image": E.image, "method": m, "seed": r, "base": b, "K": Kp, "mean_path": mu, "sd_path": sd,
+                        "best": s[ib], "worst": s[iw], "best_minus_mean": s[ib] - mu, "mean_minus_worst": mu - s[iw],
+                        "range": s[ib] - s[iw], "ens": q_ens[b]["diff"], "ens_minus_mean": q_ens[b]["diff"] - mu,
+                        "best_minus_ens": s[ib] - q_ens[b]["diff"], "best_path": ib, "worst_path": iw,
+                        "frac_paths_above_ens": sum(v > q_ens[b]["diff"] for v in s) / Kp,
+                        "ins_mean": sum(x[f"ins_{b}"] for x in per) / Kp, "del_mean": sum(x[f"del_{b}"] for x in per) / Kp,
+                        "ins_best_minus_mean": per[ib][f"ins_{b}"] - sum(x[f"ins_{b}"] for x in per) / Kp,
+                        "del_best_minus_mean": per[ib][f"del_{b}"] - sum(x[f"del_{b}"] for x in per) / Kp}
+                j = 1
+                while j <= Kp:
+                    summ[f"bestof{j}_minus_mean"] = best_of_m(s, j) - mu
+                    j *= 2
+                # chọn ở giao thức này, đánh giá ở giao thức kia (tránh lạc quan do chọn và chấm trên cùng metric)
+                for b2 in E.bases:
+                    if b2 != b:
+                        s2 = [x[f"insdel_{b2}"] for x in per]
+                        mu2 = sum(s2) / Kp
+                        summ[f"select_here_eval_{b2}_minus_mean"] = s2[ib] - mu2
+                        summ[f"select_here_eval_{b2}_rank"] = sorted(s2, reverse=True).index(s2[ib]) + 1
+                        summ[f"spearman_paths_vs_{b2}"] = _rank_corr(torch.tensor(s), torch.tensor(s2))
+                # proxy: tương quan hạng với điểm, và lợi ích nếu chọn đường theo proxy (hướng đặt trước)
+                for px, direction in PROXIES.items():
+                    v = [x[px] for x in per]
+                    if not all(math.isfinite(z) for z in v):
+                        continue
+                    summ[f"rho_{px}"] = _rank_corr(torch.tensor(v), torch.tensor(s))
+                    pick = (max if direction == "max" else min)(range(Kp), key=lambda i: v[i])
+                    summ[f"select_{px}_minus_mean"] = s[pick] - mu
+                rows["pathscore"].append(summ)
+            del As, info
+    sync()
+    rows["budget"].append({"image": E.image, "block": "pathscore", "seed": -1, "part": "path_scores",
+                           "grad_evals": Counter.n - n0, "fwd_evals": SM.FwdCounter.n - f0, "seconds_grad": time.time() - t0,
+                           "seconds_metrics": 0.0, "unique_paths": Kp * R, "nominal_paths": Kp * R, "evals_per_path": N * S["M"]})
+    return {"rows": dict(rows)}
+
+
+def process_pathscore(ctx: Ctx, S: dict, out: str, idx: int, dgs: dict) -> None:
+    image = f"seg{idx:05d}"
+    cdir = os.path.join(out, "cache", image)
+    os.makedirs(cdir, exist_ok=True)
+    pp = os.path.join(cdir, "pathscore.pt")
+    if _load(pp, dgs["pathscore"]) is not None:
+        print(f"    [pathscore] {image}: đã có, bỏ qua")
+        return
+    E = Env(ctx, S, idx)
+    ip = os.path.join(cdir, "image.pt")
+    if not os.path.exists(ip):
+        torch.save({"info": E.info(), "x": E.it.x.half(), "mask": E.mask.cpu()}, ip)
+    t0, n0 = time.time(), Counter.n
+    obj = path_scores(E)
+    obj["digest"] = dgs["pathscore"]
+    torch.save(obj, pp)
+    print(f"    [pathscore] {image}: {Counter.n - n0} grad eval, {time.time() - t0:.0f}s", flush=True)
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def estimate_pathscore(S: dict, per_eval: float, per_fwd: float) -> dict:
+    pc = S["path_scores"]
+    Kp, R, nm = int(pc["K"]), int(pc["seeds"]), len(pc.get("methods", ["S0"]))
+    ins_one = len(S["insdel_bases"]) * 2 * (int(S["insdel_steps"]) + 1)
+    grad = Kp * R * nm * S["N"] * S["M"]
+    fwd = (Kp + 1) * R * nm * ins_one
+    n = int(pc["n_images"])
+    return {"grad_per_image": grad, "fwd_per_image": fwd, "n_images": n, "minutes": n * (grad * per_eval + fwd * per_fwd) / 60}
+
+
+def run_pathscore(ctx: Ctx) -> None:
+    from .pilot import bench
+    cfg = ctx.cfg
+    S = settings(cfg)
+    if not S.get("path_scores"):
+        raise SystemExit("config thiếu sampling.path_scores")
+    out = sampling_out(cfg)
+    dgs = digests(cfg, S)
+    pc = S["path_scores"]
+    idxs = ctx.sp["pilot"][:int(pc["n_images"])]
+    b = bench(ctx)
+    pf = bench_fwd(ctx)
+    est = estimate_pathscore(S, b["per_eval"], pf)
+    print(f"[sampling-pathscore] {pc.get('methods', ['S0'])}, K = {pc['K']} đường × {pc['seeds']} seed, {len(idxs)} ảnh: "
+          f"{est['grad_per_image']} grad + {est['fwd_per_image']} fwd mỗi ảnh ≈ {est['minutes']:.1f} phút")
+    bud = S.get("budget") or {}
+    lim = float(bud.get("pathscore_minutes", 30)) * float(bud.get("slack", 1.25))
+    if est["minutes"] > lim and bud.get("enforce", True):
+        raise SystemExit(f"[sampling-pathscore] ước tính {est['minutes']:.1f} phút > giới hạn {lim:.1f} (budget.pathscore_minutes × slack)")
+    t0 = time.time()
+    for j, idx in enumerate(idxs):
+        print(f"  [sampling/pathscore] ảnh {j + 1}/{len(idxs)} seg{idx:05d}", flush=True)
+        process_pathscore(ctx, S, out, idx, dgs)
+    names = sorted(set(f"seg{i:05d}" for i in list(image_indices(ctx, S)) + list(idxs)))
+    write_csvs(out, names, S)
+    with open(os.path.join(out, "meta_pathscore.json"), "w") as fh:
+        json.dump({"time": _dt.datetime.now().isoformat(timespec="seconds"), "indices": [int(i) for i in idxs],
+                   "path_scores": pc, "estimate": est, "bench": {**b, "per_fwd": pf}, "minutes": (time.time() - t0) / 60,
+                   "digest": dgs["pathscore"], "provenance": provenance(cfg)}, fh, indent=1, default=str)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ước tính, kế hoạch
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -954,10 +1122,11 @@ def write_csvs(out: str, names: list, S: dict) -> None:
             allrows["budget"].append({"image": im, "block": f"lime_g{lo['grid']}", "seed": -1, "part": "lime_prior",
                                       "grad_evals": 0, "fwd_evals": lo["n_queries"], "seconds_grad": 0.0,
                                       "seconds_metrics": lo.get("seconds", float("nan"))})
-        qp = os.path.join(cdir, "quad.pt")
-        if os.path.exists(qp):
-            for k, rs in torch.load(qp, weights_only=False)["rows"].items():
-                allrows[k] += rs
+        for extra in ("quad.pt", "pathscore.pt"):
+            qp = os.path.join(cdir, extra)
+            if os.path.exists(qp):
+                for k, rs in torch.load(qp, weights_only=False)["rows"].items():
+                    allrows[k] += rs
         for blk in blocks(S):
             sp = os.path.join(cdir, f"{blk['name']}_summary.pt")
             if not os.path.exists(sp):
@@ -977,7 +1146,8 @@ def write_csvs(out: str, names: list, S: dict) -> None:
               "covariance": "sampling_covariance", "cov_pairs": "sampling_covariance_pairs", "budget": "sampling_budget",
               "paths": "sampling_paths", "locality": "sampling_locality", "curves": "sampling_curves", "ref": "sampling_ref",
               "lime": "sampling_lime", "images": "sampling_images", "quad": "sampling_quad",
-              "quad_paths": "sampling_quad_paths", "coverage_pixel": "sampling_coverage_pixel"}
+              "quad_paths": "sampling_quad_paths", "coverage_pixel": "sampling_coverage_pixel",
+              "pathscore": "sampling_pathscore", "pathscore_paths": "sampling_pathscore_paths"}
     for k, rs in allrows.items():
         if rs:
             pd.DataFrame(rs).to_csv(os.path.join(out, f"{rename.get(k, 'sampling_' + k)}.csv"), index=False)

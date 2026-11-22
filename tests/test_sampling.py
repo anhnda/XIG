@@ -442,6 +442,53 @@ def test_ABC_registry_and_estimates():
     assert holm_family("vs_S0", "S2", "S0", "insdel_blur") == "primary"
 
 
+def test_D_best_of_m_exact_and_registry():
+    import itertools
+    from probe.sampling_benchmark import best_of_m, digests, estimate_pathscore, settings
+    x = [0.3, -0.1, 0.7, 0.2, 0.05, 0.4]
+    for m in range(1, 7):
+        brute = sum(max(c) for c in itertools.combinations(x, m)) / math.comb(6, m)
+        assert best_of_m(x, m) == pytest.approx(brute, abs=1e-12)
+    assert best_of_m(x, 1) == pytest.approx(sum(x) / 6)
+    cfg = _cfg()
+    S = settings(cfg)
+    e = estimate_pathscore(S, 0.002, 0.0007)
+    pc = S["path_scores"]
+    assert e["grad_per_image"] == pc["K"] * pc["seeds"] * S["N"] * S["M"]
+    cfg2 = copy.deepcopy(cfg)
+    cfg2["sampling"]["path_scores"]["K"] = 8
+    d0, d2 = digests(cfg, S), digests(cfg2, settings(cfg2))
+    assert d0["pathscore"] != d2["pathscore"] and d0["primary"] == d2["primary"]
+
+
+def test_D_pathscore_section_on_synthetic_rows(tmp_path):
+    import numpy as np
+    import pandas as pd
+    from probe.sampling_benchmark import settings
+    from probe.sampling_report import pathscore_section
+    S = settings(_cfg())
+    rng = np.random.default_rng(0)
+    rows, prow = [], []
+    for i in range(6):
+        for b in ("blur", "black"):
+            s = rng.normal(0.2, 0.05, 8)
+            r = {"image": f"im{i}", "method": "S0", "seed": 0, "base": b, "K": 8, "mean_path": s.mean(), "sd_path": s.std(),
+                 "best_minus_mean": s.max() - s.mean(), "mean_minus_worst": s.mean() - s.min(), "range": np.ptp(s),
+                 "ens": s.mean() + 0.03, "ens_minus_mean": 0.03, "best_minus_ens": s.max() - s.mean() - 0.03,
+                 "frac_paths_above_ens": float((s > s.mean() + 0.03).mean()), "bestof1_minus_mean": 0.0,
+                 "bestof8_minus_mean": s.max() - s.mean(), "rho_loo_cos": 0.1, "select_loo_cos_minus_mean": 0.01,
+                 "best_path": int(s.argmax()), "worst_path": int(s.argmin())}
+            rows.append(r)
+            for k in range(8):
+                prow.append({"image": f"im{i}", "method": "S0", "seed": 0, "path": k, f"insdel_{b}": s[k]})
+    pp = pd.DataFrame(prow).groupby(["image", "method", "seed", "path"]).first().reset_index()
+    L, files = pathscore_section(str(tmp_path), S, {"bootstrap": 200, "seed": 1}, pd.DataFrame(rows), pp)
+    text = "\n".join(L)
+    assert "best_minus_mean" in text and "loo_cos" in text
+    L0, _ = pathscore_section(str(tmp_path), S, {}, None, None)
+    assert "chưa chạy" in "\n".join(L0)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # thống kê của báo cáo
 # ─────────────────────────────────────────────────────────────────────────────
