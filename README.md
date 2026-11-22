@@ -26,7 +26,11 @@ bash scripts/run.sh sampling-debug     # 2 ảnh, N = 8, K ∈ {2,4} → runs_pr
 bash scripts/run.sh sampling-estimate  # đo GPU, in phút từng khối + kế hoạch theo sampling.budget (không chạy)
 bash scripts/run.sh sampling-pilot     # ref → primary → khối phụ trong ngân sách → runs_probe/pilot/ATTR_PROBE_SAMPLING_REPORT.md
 bash scripts/run.sh sampling-report    # dựng lại thống kê/đồ thị/báo cáo từ CSV (DEBUG=1 cho thư mục debug)
+bash scripts/run.sh sampling-quad      # C: cùng tập đường, M ∈ quad_check.M trên vài ảnh (chạy trước khi tăng số ảnh)
 ```
+
+Thí nghiệm theo sau: A = khối `pixel` (S2p/S3p/S4p: cân bằng giữa các đường, mỗi phần tử lịch riêng, đúng q_SPI);
+B = khối `eta025/eta05/eta075/eta1` (quét η, đối chứng S6 cùng η); C = `sampling-quad`. Báo cáo có mục A, B, C riêng.
 
 Cấu hình ở mục `sampling:` của `config.yaml` (hash riêng theo khối, không làm mất cache P0–P3). Sampler: `probe/sampling.py`;
 runner: `probe/sampling_benchmark.py`; thống kê + báo cáo: `probe/sampling_report.py`; test: `tests/test_sampling.py`.

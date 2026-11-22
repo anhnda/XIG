@@ -38,10 +38,11 @@
 #   sampling-estimate  đo GPU, in ước tính từng khối + kế hoạch theo ngân sách (không chạy thí nghiệm)
 #   sampling-pilot     P4 đầy đủ (ref → primary → khối phụ trong ngân sách) → runs_probe/pilot/ATTR_PROBE_SAMPLING_REPORT.md
 #   sampling-report    dựng lại thống kê + đồ thị + báo cáo P4 từ CSV (DEBUG=1 cho thư mục debug)
+#   sampling-quad      thí nghiệm C: cùng tập đường, M ∈ sampling.quad_check.M trên vài ảnh (DEBUG=1 cho debug)
 # env: CFG=config.yaml, EXTRA="--device cuda:1"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report|mech-debug|mech|mech-e1|mech-e23|mech-report|cross-debug|cross|cross-gate|cross-e4|cross-e4c|cross-e4d|cross-e4d-debug|cross-report|e5-debug|e5|e5-report|e6-debug|e6|e6-report|e7-debug|e7|e7-report|e8-debug|e8|e8-report|e9-debug|e9|e9-report|ocs-debug|ocs|ocs-report|e10-debug|e10|e10-report|e11-debug|e11|e11-report|e12-debug|e12|e12-report|sampling-test|sampling-debug|sampling-estimate|sampling-pilot|sampling-report}
+STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report|mech-debug|mech|mech-e1|mech-e23|mech-report|cross-debug|cross|cross-gate|cross-e4|cross-e4c|cross-e4d|cross-e4d-debug|cross-report|e5-debug|e5|e5-report|e6-debug|e6|e6-report|e7-debug|e7|e7-report|e8-debug|e8|e8-report|e9-debug|e9|e9-report|ocs-debug|ocs|ocs-report|e10-debug|e10|e10-report|e11-debug|e11|e11-report|e12-debug|e12|e12-report|sampling-test|sampling-debug|sampling-estimate|sampling-pilot|sampling-report|sampling-quad}
 CFG=${CFG:-config.yaml}
 EXTRA=${EXTRA:-}
 PY="python -m probe --config $CFG $EXTRA"
@@ -97,5 +98,6 @@ case "$STAGE" in
   sampling-estimate) $PY sampling-estimate ;;
   sampling-pilot) $PY sampling ;;
   sampling-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug sampling-report; else $PY sampling-report; fi ;;
+  sampling-quad) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug sampling-quad; else $PY sampling-quad; fi ;;
   *) echo "stage không biết: $STAGE"; exit 1 ;;
 esac

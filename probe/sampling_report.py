@@ -24,6 +24,9 @@ COLORS = {"S0": "#2a78d6", "S1": "#eb6834", "S2": "#1baf7a", "S3": "#eda100", "S
 MARKERS = {"S0": "o", "S1": "s", "S2": "^", "S3": "D", "S4": "v", "S5": "P", "S6": "X", "S7": "*"}
 MUTED = "#6b6a63"
 PRIMARY_FAMILY = ("S1", "S2", "S3", "S4")
+PIXEL_FAMILY = ("S2p", "S3p", "S4p")
+COLORS.update({"S2p": COLORS["S2"], "S3p": COLORS["S3"], "S4p": COLORS["S4"]})
+MARKERS.update({"S2p": "^", "S3p": "D", "S4p": "v"})
 LOWER_BETTER = {"del_blur", "del_black", "signed_del_blur", "signed_del_black", "abs_resid_rel", "rel_rmse",
                 "rel_rmse_deb", "var_elem", "var_patch", "var_elem_rel"}
 
@@ -34,6 +37,37 @@ def base_of(m: str) -> str:
 
 def variant_of(m: str) -> str:
     return m.split("@")[1] if "@" in m else ""
+
+
+def eta_of(m: str, grid0: int, eta0: float):
+    """η của nhãn phương pháp patch trên lưới chính (nhãn không '@' = η chính); None nếu lưới khác."""
+    import re
+    if "@" not in m:
+        return eta0
+    mm = re.match(r"g(\d+)e([0-9.]+)$", variant_of(m))
+    if not mm or int(mm.group(1)) != grid0:
+        return None
+    return float(mm.group(2))
+
+
+def holm_family(kind: str, a: str, b: str, metric: str) -> str | None:
+    """Họ đa so sánh (Holm trong từng họ): chính, A (pixel), B (η so với S6 cùng η). Còn lại: exploratory, không hiệu chỉnh."""
+    if metric not in ("insdel_blur", "insdel_black"):
+        return None
+    if kind == "vs_S0" and a in PRIMARY_FAMILY:
+        return "primary"
+    if kind == "vs_S0" and a in PIXEL_FAMILY:
+        return "A_pixel"
+    if kind == "vs_same_operator_S6" and "@" in a and base_of(a) in ("S2", "S4"):
+        import re
+        mm = re.match(r"g\d+e([0-9.]+)$", variant_of(a))
+        if mm and float(mm.group(1)) > 0:                            # biến thể η > 0 (lưới 14×14, η = 0 không thuộc họ B)
+            return "B_eta"
+    return None
+
+
+def _style_s(m: str):
+    return {"color": COLORS.get(base_of(m), MUTED), "marker": MARKERS.get(base_of(m), "o")}
 
 
 def same_op_control(m: str) -> str | None:
@@ -120,7 +154,8 @@ def aggregate(pi, st: dict) -> "pd.DataFrame":
         c = same_op_control(m)
         if c and c in methods:
             comps.append(("vs_same_operator_S6", m, c))
-    for a, b in (("S4", "S2"), ("S3", "S2"), ("S3", "S1"), ("S2", "S6"), ("S4", "S6")):
+    for a, b in (("S4", "S2"), ("S3", "S2"), ("S3", "S1"), ("S2", "S6"), ("S4", "S6"),
+                 ("S4p", "S2p"), ("S3p", "S2p"), ("S3p", "S1"), ("S2p", "S2"), ("S4p", "S4")):
         if a in methods and b in methods and ("vs_same_operator_S6", a, b) not in comps:
             comps.append(("contrast", a, b))
     rows = []
@@ -131,12 +166,14 @@ def aggregate(pi, st: dict) -> "pd.DataFrame":
                 if not len(d):
                     continue
                 s = boot_stats(d.values, B, seed, metric in LOWER_BETTER)
+                fam = holm_family(kind, a, b, metric)
                 rows.append({"comparison": kind, "a": a, "b": b, "metric": metric, "type": "diff", "K": K,
                              "B_grad": bgrad.get((a, K), np.nan), "n_seeds": nseeds.get(a, np.nan), **s,
-                             "primary": kind == "vs_S0" and a in PRIMARY_FAMILY and metric in ("insdel_blur", "insdel_black")})
+                             "family": fam, "primary": fam == "primary"})
             for metric in ("var_elem", "var_patch", "rel_mse_deb"):
                 if metric == "rel_mse_deb":
-                    same_ref = (base_of(a) in ("S1",) and b == "S0") or (same_op_control(a) == b) or (a, b) in (("S4", "S2"), ("S3", "S2"))
+                    same_ref = ((a in ("S1",) + PIXEL_FAMILY) and b == "S0") or (same_op_control(a) == b) \
+                        or (a, b) in (("S4", "S2"), ("S3", "S2"), ("S4p", "S2p"), ("S3p", "S2p"))
                     if not same_ref:
                         continue
                 lr = log_ratio(pi, metric, a, b, K)
@@ -147,13 +184,15 @@ def aggregate(pi, st: dict) -> "pd.DataFrame":
                              "B_grad": bgrad.get((a, K), np.nan), "n_seeds": nseeds.get(a, np.nan), **s,
                              "ratio_gmean": math.exp(s["mean"]) if np.isfinite(s["mean"]) else np.nan,
                              "ratio_lo95": math.exp(s["lo95"]) if np.isfinite(s["lo95"]) else np.nan,
-                             "ratio_hi95": math.exp(s["hi95"]) if np.isfinite(s["hi95"]) else np.nan, "primary": False})
+                             "ratio_hi95": math.exp(s["hi95"]) if np.isfinite(s["hi95"]) else np.nan,
+                             "family": None, "primary": False})
     ag = pd.DataFrame(rows)
     if len(ag):
         ag["p_holm"] = np.nan
-        prim = ag.index[ag.primary]
-        if len(prim):
-            ag.loc[prim, "p_holm"] = holm(list(ag.loc[prim, "p_boot"]))
+        for fam in ("primary", "A_pixel", "B_eta"):                  # Holm riêng trong từng họ
+            idx = ag.index[ag.family == fam]
+            if len(idx):
+                ag.loc[idx, "p_holm"] = holm(list(ag.loc[idx, "p_boot"]))
         ag["significant"] = ag.p_holm < alpha
     return ag
 
@@ -220,7 +259,8 @@ def _plt():
 
 def _style(m: str):
     b = base_of(m)
-    return {"color": COLORS.get(b, MUTED), "marker": MARKERS.get(b, "o"), "linestyle": "-" if "@" not in m else "--"}
+    ls = ":" if b in PIXEL_FAMILY else ("--" if "@" in m else "-")       # màu theo thiết kế, nét theo biến thể (không chỉ màu)
+    return {"color": COLORS.get(b, MUTED), "marker": MARKERS.get(b, "o"), "linestyle": ls}
 
 
 def _mean_ci(pi, m, metric, Ks):
@@ -243,7 +283,7 @@ def _mean_ci(pi, m, metric, Ks):
 def plots(out: str, pi, ps, ag, cov, cvg, loc, curves, heat, ref, bases, Kmax) -> list:
     files = []
     plt = _plt()
-    methods = list(dict.fromkeys(pi.method))
+    methods = [m for m in dict.fromkeys(pi.method) if "@" not in m]      # biến thể η / lưới: đồ thị riêng (sampling_eta_sweep.png)
     Ks = sorted(set(pi.K))
 
     def save(fig, name):
@@ -324,7 +364,7 @@ def plots(out: str, pi, ps, ag, cov, cvg, loc, curves, heat, ref, bases, Kmax) -
             fig, ax = plt.subplots(1, len(cols), figsize=(4 * len(cols), 3.5), squeeze=False)
             g = cvg.groupby(["method", "K"])[cols].mean().reset_index()
             for i, col in enumerate(cols):
-                for m in dict.fromkeys(g.method):
+                for m in [x for x in dict.fromkeys(g.method) if "@" not in x]:
                     s = g[g.method == m]
                     ax[0, i].plot(s.K, s[col], label=m, **_style(m))
                 ax[0, i].set_xscale("log", base=2); ax[0, i].set_xlabel("K"); ax[0, i].set_title(col, fontsize=9)
@@ -339,7 +379,7 @@ def plots(out: str, pi, ps, ag, cov, cvg, loc, curves, heat, ref, bases, Kmax) -
             s = ag[(ag.comparison == "vs_S0") & (ag.type == "diff") & ag.metric.isin([f"insdel_{b}" for b in bases])]
             fig, ax = plt.subplots(1, len(bases), figsize=(5.2 * len(bases), 3.6), squeeze=False)
             for i, b in enumerate(bases):
-                for m in dict.fromkeys(s.a):
+                for m in [x for x in dict.fromkeys(s.a) if "@" not in x]:
                     q = s[(s.a == m) & (s.metric == f"insdel_{b}")].sort_values("K")
                     ax[0, i].plot(q.K, q.frac_improved, label=m, **_style(m))
                 ax[0, i].axhline(0.5, color=MUTED, lw=0.8)
@@ -353,7 +393,8 @@ def plots(out: str, pi, ps, ag, cov, cvg, loc, curves, heat, ref, bases, Kmax) -
     try:
         if ag is not None and len(ag):
             s = ag[(ag.type == "log_ratio") & (ag.metric == "var_elem")]
-            sel = s[((s.comparison == "vs_S0") & (s.a == "S1")) | (s.comparison == "vs_same_operator_S6")]
+            sel = s[(((s.comparison == "vs_S0") & s.a.isin(("S1",) + PIXEL_FAMILY)) | (s.comparison == "vs_same_operator_S6"))
+                    & ~s.a.str.contains("@")]
             if len(sel):
                 fig, ax = plt.subplots(figsize=(6, 4))
                 for (a, b), q in sel.groupby(["a", "b"]):
@@ -384,6 +425,156 @@ def plots(out: str, pi, ps, ag, cov, cvg, loc, curves, heat, ref, bases, Kmax) -
     except Exception as ex:
         print(f"[sampling plots] locality: {type(ex).__name__}: {ex}")
     return files
+
+
+def eta_entries(pi, grid0: int, eta0: float) -> list:
+    """[(η, base, nhãn)] cho S2/S4/S6 trên lưới chính (η chính từ lượt primary, các η khác từ khối phụ)."""
+    out = []
+    for m in dict.fromkeys(pi.method):
+        b = base_of(m)
+        if b in ("S2", "S4", "S6"):
+            e = eta_of(m, grid0, eta0)
+            if e is not None:
+                out.append((e, b, m))
+    return sorted(out)
+
+
+def eta_sweep_table(pi, ent: list, bases, Ks, st: dict):
+    import pandas as pd
+    B, seed = int(st.get("bootstrap", 10000)), int(st.get("seed", 4))
+    ctrl = {e: m for e, b, m in ent if b == "S6"}
+    rows = []
+    for e, b, m in ent:
+        for K in Ks:
+            r = {"eta": e, "method": b, "label": m, "K": K}
+            for base in bases:
+                col = f"insdel_{base}"
+                v = pi[(pi.method == m) & (pi.K == K)][col]
+                r[f"{col}"] = float(v.mean()) if len(v) else np.nan
+                s0 = boot_stats(paired_diff(pi, col, m, "S0", K).values, B, seed)
+                r[f"d_vs_S0_{base}"], r[f"lo_vs_S0_{base}"], r[f"hi_vs_S0_{base}"] = s0["mean"], s0.get("lo95"), s0.get("hi95")
+                r[f"frac_vs_S0_{base}"] = s0.get("frac_improved")
+                if b != "S6" and e in ctrl:
+                    s6 = boot_stats(paired_diff(pi, col, m, ctrl[e], K).values, B, seed)
+                    r[f"d_vs_S6eta_{base}"], r[f"lo_vs_S6eta_{base}"], r[f"hi_vs_S6eta_{base}"] = s6["mean"], s6.get("lo95"), s6.get("hi95")
+            if b != "S6" and e in ctrl:
+                lr = log_ratio(pi, "var_elem", m, ctrl[e], K)
+                if len(lr):
+                    r["var_ratio_vs_S6eta"] = float(np.exp(lr.mean()))
+            lr0 = log_ratio(pi, "var_elem", m, "S0", K)
+            if len(lr0):
+                r["var_ratio_vs_S0"] = float(np.exp(lr0.mean()))
+            rows.append(r)
+    return pd.DataFrame(rows)
+
+
+def plot_eta(out: str, pi, et, bases, Kmax) -> list:
+    if et is None or not len(et):
+        return []
+    plt = _plt()
+    try:
+        fig, ax = plt.subplots(2, len(bases), figsize=(5.2 * len(bases), 7), squeeze=False)
+        q = et[et.K == Kmax]
+        for i, b in enumerate(bases):
+            s0 = pi[(pi.method == "S0") & (pi.K == Kmax)][f"insdel_{b}"].mean()
+            for mb in ("S6", "S2", "S4"):
+                s = q[q.method == mb].sort_values("eta")
+                if not len(s):
+                    continue
+                ax[0, i].plot(s.eta, s[f"insdel_{b}"], label=mb + " (η)", **_style_s(mb))
+                ax[1, i].plot(s.eta, s[f"d_vs_S0_{b}"], label=mb, **_style_s(mb))
+                ax[1, i].fill_between(s.eta.values, s[f"lo_vs_S0_{b}"].astype(float), s[f"hi_vs_S0_{b}"].astype(float),
+                                      color=COLORS[mb], alpha=0.12, linewidth=0)
+            ax[0, i].axhline(s0, color=COLORS["S0"], lw=1.2, ls="--", label="S0")
+            ax[1, i].axhline(0, color=MUTED, lw=0.8)
+            ax[0, i].set_ylabel(f"InsDel ({b}), K = {Kmax}"); ax[1, i].set_ylabel(f"hiệu với S0 ({b}), CI 95%")
+            for a in ax[:, i]:
+                a.set_xlabel("η (0 = lịch cấp patch, 1 = SPI theo phần tử)")
+            ax[0, i].legend(fontsize=7)
+        fig.suptitle("B — quét mức ghép patch η (mỗi η có đối chứng độc lập S6 cùng η)", fontsize=9)
+        f = os.path.join(out, "sampling_eta_sweep.png")
+        fig.tight_layout(); fig.savefig(f); plt.close(fig)
+        return [f]
+    except Exception as ex:
+        print(f"[sampling plots] eta: {type(ex).__name__}: {ex}")
+        return []
+
+
+def quad_section(out: str, S: dict, st: dict, qd, qp) -> tuple[list, list]:
+    """Thí nghiệm C — cùng tập đường, M điểm cầu phương mỗi đoạn."""
+    L = ["## C. Quadrature sensitivity (cùng tập đường, M thay đổi)\n"]
+    if qd is None or not len(qd):
+        L.append("_Thí nghiệm C **chưa chạy** — `bash scripts/run.sh sampling-quad`._\n")
+        return L, []
+    bases = list(S["insdel_bases"])
+    Kmax = int(qd.K.max())
+    Mref = int(qd.M_ref.iloc[0])
+    M0 = int(S["M"])
+    me = float(st.get("min_effect", 0.01))
+    n = int(qd.image.nunique())
+    L.append(f"{n} ảnh (tiền tố split pilot), seed {sorted(set(qd.seed))}, các đường **giống hệt** nhau giữa các M (chỉ đổi số điểm "
+             f"cầu phương phân tầng mỗi đoạn); M = {M0} dùng đúng khoá cầu phương của thí nghiệm chính. Tham chiếu: M_max = {Mref}. "
+             "B = K·N·M khác nhau giữa các M — đây là kiểm tra độ chính xác số, KHÔNG phải so sánh công bằng ngân sách.\n")
+    cols = [c for c in ["abs_resid_rel"] + [f"insdel_{b}" for b in bases] + [f"d_insdel_{b}_vs_Mmax" for b in bases]
+            + ["spearman_vs_Mmax", "topk_vs_Mmax", "rel_l2_vs_Mmax", "rel_rmse_deb"] if c in qd]
+    L.append("Trung bình theo ảnh:\n")
+    L.append(md(qd.groupby(["method", "K", "M"])[cols].mean().reset_index()))
+    abs_cols = {f"abs_d_{b}": (qd[f"d_insdel_{b}_vs_Mmax"]).abs() for b in bases}
+    qa = qd.assign(**abs_cols)
+    L.append(f"|ΔInsDel| so với M = {Mref} (median và max qua ảnh) ở K = {Kmax}:\n")
+    tb = qa[qa.K == Kmax].groupby(["method", "M"])[[f"abs_d_{b}" for b in bases]].agg(["median", "max"])
+    tb.columns = [f"{a}_{b}" for a, b in tb.columns]
+    L.append(md(tb.reset_index()))
+    if qp is not None and len(qp):
+        L.append("Completeness theo từng đường (|ΣA − D|/|D|):\n")
+        L.append(md(qp.assign(abs_resid=qp.resid_rel.abs()).groupby("M").abs_resid.describe(percentiles=[0.5, 0.9])
+                    .reset_index()[["M", "count", "mean", "50%", "90%", "max"]]))
+    # thứ tự phương pháp có đổi theo M không
+    rows = []
+    meths = list(dict.fromkeys(qd.method))
+    for m in [x for x in meths if x != "S0"]:
+        for M in sorted(set(qd.M)):
+            for b in bases:
+                a = qd[(qd.method == m) & (qd.M == M) & (qd.K == Kmax)].set_index("image")[f"insdel_{b}"]
+                z = qd[(qd.method == "S0") & (qd.M == M) & (qd.K == Kmax)].set_index("image")[f"insdel_{b}"]
+                d = (a - z).dropna()
+                if len(d):
+                    rows.append({"method": m, "M": M, "base": b, "n_images": len(d), "mean_d_vs_S0": d.mean(),
+                                 "min": d.min(), "max": d.max(), "frac_positive": float((d > 0).mean())})
+    if rows:
+        import pandas as pd
+        dm = pd.DataFrame(rows)
+        L.append(f"Hiệu phương pháp − S0 ở K = {Kmax} theo M (cùng ảnh; {n} ảnh — chỉ mô tả, không kiểm định):\n")
+        L.append(md(dm))
+    big = qa[(qa.K == Kmax) & (qa.M == M0)][[f"abs_d_{b}" for b in bases]].median().max()
+    flag = (f"**Cảnh báo:** ở M = {M0} (thiết lập của thí nghiệm chính), median |ΔInsDel| so với M = {Mref} là {fmt(big)} > min_effect "
+            f"= {me}: sai số số học cùng cỡ với các hiệu ứng đang so — cần tăng M (hoặc giảm nhiễu cầu phương) trước khi so sampler."
+            if np.isfinite(big) and big > me else
+            f"Ở M = {M0}, median |ΔInsDel| so với M = {Mref} là {fmt(big)} ≤ min_effect = {me}: sai số cầu phương của ensemble K = {Kmax} "
+            "nhỏ hơn ngưỡng hiệu ứng thực tế — không phải nguyên nhân chính của khác biệt giữa sampler (với số ảnh hạn chế này).")
+    L.append(flag + "\n")
+    files = []
+    try:
+        plt = _plt()
+        fig, ax = plt.subplots(1, len(bases) + 1, figsize=(4.6 * (len(bases) + 1), 3.6), squeeze=False)
+        g = qd[qd.K == Kmax].groupby(["method", "M"]).mean(numeric_only=True).reset_index()
+        for m in meths:
+            s = g[g.method == m].sort_values("M")
+            for i, b in enumerate(bases):
+                ax[0, i].plot(s.M, s[f"insdel_{b}"], label=m, **_style_s(m))
+            ax[0, -1].plot(s.M, s.abs_resid_rel, label=m, **_style_s(m))
+        for i, b in enumerate(bases):
+            ax[0, i].set_xscale("log", base=2); ax[0, i].set_xlabel("M (điểm / đoạn)"); ax[0, i].set_ylabel(f"InsDel ({b}), K = {Kmax}")
+            ax[0, i].legend(fontsize=7)
+        ax[0, -1].set_xscale("log", base=2); ax[0, -1].set_yscale("log")
+        ax[0, -1].set_xlabel("M"); ax[0, -1].set_ylabel("|ΣA − D| / |D| của ensemble")
+        fig.suptitle("C — cùng tập đường, chỉ đổi cầu phương", fontsize=9)
+        f = os.path.join(out, "sampling_quad.png")
+        fig.tight_layout(); fig.savefig(f); plt.close(fig)
+        files.append(f)
+    except Exception as ex:
+        print(f"[sampling plots] quad: {type(ex).__name__}: {ex}")
+    return L, files
 
 
 def heat_and_curves(out: str, pi, curves, heat, bases, Kmax, cases: list) -> list:
@@ -486,7 +677,10 @@ DEFS = """
 | S5 | φ_{k,g} = π_g cố định cho cả ensemble (hình dạng vẫn mới mỗi đường) | q_patch |
 | S6 | φ iid U(0,1) mới mỗi đường | q_patch (đối chứng độc lập) |
 | S7 | φ = (hạng của q_g + τξ + U)/P, q_g = hạng hệ số LIME-grid (cao → muộn) | **khác** (phụ thuộc mô hình) |
-| η > 0 | (1 − η)Z_patch + ηZ_S0 (đường S0 cùng chỉ số) | khác q_patch khi η ∉ {0} |
+| η > 0 | (1 − η)Z_patch + ηZ_S0 (đường S0 cùng chỉ số) | khác q_patch khi η ∉ {0}; η = 1 ≡ đúng đường S0 |
+| S2p | (A) DP **theo phần tử** như S0 (cùng số gia với S0 đường k), chỉ đặt lại anchor từng phần tử tại ⌊Nφ_{k,i}⌋, φ_{k,i} = frac(π_i + (z_i b(k) mod K_max + ε)/K_max), z_i lẻ ngẫu nhiên | **q_SPI** (π_i iid ⇒ anchor iid đều, độc lập hình dạng) — cùng operator với S0 |
+| S3p | K/2 đường S2p đầu + đường đảo | q_SPI |
+| S4p | như S2p nhưng z_i = 1 + 2·parity(h + w) + 4r_i: cặp pixel kề cạnh có độ lệch pha trải đều qua các đường | q_SPI |
 
 Bảo toàn phân phối: (i) xoay vòng số gia về anchor giữ đúng DP (dãy số gia trao đổi được ⇒ argmax đều và độc lập với hình dạng);
 (ii) π_g iid U(0,1) ⇒ pha trong một đường iid U(0,1) ở S2/S4/S5/S6 ⇒ **cùng q_patch**; khác biệt S2/S4/S5 so với S6 là sai số ước lượng
@@ -520,6 +714,7 @@ def write(out: str, cfg: dict) -> str:
     ps, pi, cvg, cov, cpair, bud, pth, loc, cur, ref, lime, imgs = (rd(f"sampling_{n}") for n in (
         "per_seed", "per_image", "coverage", "covariance", "covariance_pairs", "budget", "paths", "locality", "curves", "ref",
         "lime", "images"))
+    qd, qpth, cvp = rd("sampling_quad"), rd("sampling_quad_paths"), rd("sampling_coverage_pixel")
     hp = os.path.join(out, "sampling_heatmaps.pt")
     heat = torch.load(hp, weights_only=False) if os.path.exists(hp) else {}
     bases = list(S["insdel_bases"])
@@ -532,6 +727,8 @@ def write(out: str, cfg: dict) -> str:
     if pi is None or not len(pi):
         L.append("_Chưa có kết quả: chưa chạy `bash scripts/run.sh sampling-pilot` (hoặc `sampling-debug`). Không có số liệu nào "
                  "trong báo cáo này là kết quả thật._\n")
+        Lq, _ = quad_section(out, S, st, qd, qpth)
+        L += Lq
         L.append("## Tests\n")
         L.append(_tests_text(out, cfg))
         with open(rp, "w") as fh:
@@ -852,6 +1049,78 @@ def write(out: str, cfg: dict) -> str:
            if cat == "Positive" else "Không — chưa đủ bằng chứng để thay independent SPI làm sampler mặc định.")
     L.append(f"**Q5. Có phương pháp nào đủ bằng chứng để thay independent SPI làm mặc định?** — {rec}\n")
     L.append(f"**Kết luận: {cat}.**\n")
+
+    # ── A / B / C (thí nghiệm theo sau)
+    def fam_wins(fam):
+        if not len(ag) or "family" not in ag:
+            return {}, {}
+        q = ag[ag.family == fam].copy()
+        if not len(q):
+            return {}, {}
+        q["status"] = [cell_status(r, st) for _, r in q.iterrows()]
+        w = {m: sorted(f"{r.metric}@K{int(r.K)}" for _, r in g[g.status == "win"].iterrows()) for m, g in q.groupby("a")}
+        lo = {m: sorted(f"{r.metric}@K{int(r.K)}" for _, r in g[g.status == "loss"].iterrows()) for m, g in q.groupby("a")}
+        return w, lo
+
+    L.append("## A. Balancing không ghép patch (giữ S0 pixel-independent)\n")
+    pix = [m for m in PIXEL_FAMILY if m in set(pi.method)]
+    if pix:
+        L.append("S2p/S3p/S4p dùng **đúng số gia DP của S0 cùng chỉ số đường**, mỗi phần tử một lịch riêng, chỉ đặt lại vị trí bước nhảy "
+                 "lớn nhất theo thiết kế cân bằng giữa các đường. Mỗi đường đúng q_SPI ⇒ cùng operator và cùng μ_ref với S0: mọi khác biệt "
+                 "là sai số ước lượng (RMSE so với μ_ref spi là hợp lệ). Holm trong họ A (S2p, S3p, S4p × K × {blur, black}).\n")
+        L.append(cmp_table("vs_S0", [f"insdel_{b}" for b in bases], pix))
+        L.append("Phương sai giữa ensemble và MSE đã khử nhiễu ref, so với S0 (tỷ số trung bình nhân, < 1 = tốt hơn):\n")
+        L.append(cmp_table("vs_S0", ["var_elem", "var_patch", "rel_mse_deb"], pix, typ="log_ratio"))
+        L.append("Cùng thiết kế cân bằng, có / không ghép patch (S2p − S2, S4p − S4; khác cả operator — đọc như mô tả):\n")
+        L.append(cmp_table("contrast", [f"insdel_{b}" for b in bases], ["S2p", "S4p"]))
+        if cvp is not None and len(cvp):
+            L.append("Độ phủ pha theo phần tử (thiết kế; 1 = mỗi phần tử chạm đủ K cung pha qua K đường):\n")
+            L.append(md(cvp.groupby(["method", "K"]).elem_arc_cover.mean().reset_index()))
+        wA, lA = fam_wins("A_pixel")
+        L.append(f"- Ô thắng (luật như mục 13, Holm trong họ A): {wA or '—'}; ô thua: {lA or '—'}.")
+        vA = "; ".join(f"{m}: {q_var(m, 'S0')}" for m in pix)
+        L.append(f"- Phương sai so với S0: {vA}.")
+        anyw = any(v for v in wA.values())
+        L.append("- Đọc: " + ("balancing CÓ cải thiện InsDel khi không ghép patch — nếu S2/S4 (có ghép) không thắng thì phần ghép patch là "
+                              "thứ làm hỏng kết quả." if anyw else
+                              "không có ô InsDel nào thắng có ý nghĩa; nếu tỷ số phương sai < 1 thì cân bằng giảm phương sai nhưng chưa chuyển "
+                              "thành InsDel (InsDel phi tuyến theo A) — không đủ để quy lỗi cho việc ghép patch.") + "\n")
+    else:
+        L.append("_Khối `pixel` **chưa chạy** (chưa cấu hình hoặc bị bỏ vì ngân sách) — không có kết quả._\n")
+
+    L.append("## B. Quét mức ghép patch η\n")
+    ent = eta_entries(pi, S["grid"], S["eta"])
+    etas = sorted({e for e, _, _ in ent})
+    if len(etas) >= 2:
+        et = eta_sweep_table(pi, ent, bases, Ks, st)
+        et.to_csv(os.path.join(out, "sampling_eta_sweep.csv"), index=False)
+        files += plot_eta(out, pi, et, bases, Kmax)
+        L.append(f"η đã chạy: {etas} (lưới {S['grid']}×{S['grid']}). Ở mỗi η: S6η = đối chứng độc lập cùng operator; S2η/S4η − S6η = phần do "
+                 "cân bằng; S6η − S0 = phần do operator (ghép patch). η = 1 cho đúng đường S0 (chỉ khác bộ U cầu phương) ⇒ S6@η=1 − S0 phải ≈ 0 "
+                 "(kiểm tra pipeline). Bootstrap theo ảnh; `var_ratio` = trung bình nhân tỷ số phương sai giữa ensemble.\n")
+        show = [c for c in ["eta", "method", "K"] + [x for b in bases for x in (f"insdel_{b}", f"d_vs_S0_{b}", f"lo_vs_S0_{b}",
+                f"hi_vs_S0_{b}", f"d_vs_S6eta_{b}", f"lo_vs_S6eta_{b}", f"hi_vs_S6eta_{b}")] + ["var_ratio_vs_S6eta", "var_ratio_vs_S0"]
+                if c in et]
+        L.append(md(et[et.K.isin([min(Ks), Kmax])].sort_values(["K", "method", "eta"]), show))
+        L.append("Kiểm định trong họ B (S2η, S4η so với S6η, η > 0; Holm trong họ):\n")
+        if len(ag) and "family" in ag:
+            qB = ag[ag.family == "B_eta"]
+            L.append(md(qB.sort_values(["metric", "a", "K"]), [c for c in ("a", "b", "metric", "K", "n_images", "mean", "lo95", "hi95",
+                                                                             "frac_improved", "p_boot", "p_holm") if c in qB]) if len(qB) else "_(không có)_\n")
+        wB, lB = fam_wins("B_eta")
+        L.append(f"- Ô thắng họ B: {wB or '—'}; ô thua: {lB or '—'}.")
+        op_eff = et[(et.method == "S6") & (et.K == Kmax)].sort_values("eta")
+        if len(op_eff):
+            L.append("- Hiệu operator S6η − S0 theo η (K = K_max, " + bases[0] + "): "
+                     + ", ".join(f"η={fmt(r.eta)}: {fmt(r[f'd_vs_S0_{bases[0]}'])} [{fmt(r[f'lo_vs_S0_{bases[0]}'])}, "
+                                 f"{fmt(r[f'hi_vs_S0_{bases[0]}'])}]" for _, r in op_eff.iterrows()) + ".")
+        L.append("")
+    else:
+        L.append("_Chưa đủ mức η (cần ≥ 2, ngoài lượt chính) — chạy các khối eta025 / eta05 / eta075 / eta1._\n")
+
+    Lq, fq = quad_section(out, S, st, qd, qpth)
+    L += Lq
+    files += fq
 
     L.append("## Tệp\n")
     for f in sorted(os.listdir(out)):

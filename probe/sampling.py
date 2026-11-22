@@ -149,6 +149,32 @@ def phase_design(kind: str, P: int, Kmax: int, gen: torch.Generator, g: int | No
     raise ValueError(f"thiết kế không biết: {kind}")
 
 
+def pixel_phase_design(kind: str, shape, Kmax: int, gen: torch.Generator, common=None) -> tuple[torch.Tensor, dict]:
+    """Thí nghiệm A — pha anchor RIÊNG cho từng phần tử (pixel × kênh), cân bằng giữa các đường, KHÔNG ép phần tử trong patch
+    dùng chung lịch. φ_{k,i} = frac(π_i + (z_i·b(k) mod K_max + ε_{k,i}) / K_max), π_i iid U(0,1) theo phần tử.
+      global  z_i lẻ ngẫu nhiên theo phần tử
+      nbr     z_i = 1 + 2·parity(h + w) + 4·r_i: hai pixel kề cạnh luôn có z_i − z_j ≡ 2 (mod 4) ⇒ độ lệch pha giữa chúng
+              trải đều qua các đường (cùng cơ chế với S4 nhưng ở cấp pixel; không có lưới patch)
+    π_i iid ⇒ pha trong MỘT đường iid U(0,1) theo phần tử ⇒ kết hợp với hình dạng DP mới mỗi đường (anchor_rotate), mỗi đường
+    có ĐÚNG phân phối q_SPI của S0. Với mọi tiền tố K = 2^j, mỗi phần tử phủ đúng một lần mỗi cung pha 1/K."""
+    if not is_pow2(Kmax):
+        raise ValueError(f"K_max phải là luỹ thừa của 2: {Kmax}")
+    Cc, H, W = shape
+    n = Cc * H * W
+    pi, eps = common if common is not None else common_phase_noise(n, Kmax, gen)
+    if kind == "global":
+        z = 2 * torch.randint(0, max(1, Kmax // 2), (n,), generator=gen) + 1
+    elif kind == "nbr":
+        par = ((torch.arange(H).view(1, H, 1) + torch.arange(W).view(1, 1, W)) % 2).expand(Cc, H, W).reshape(-1)
+        if float(torch.rand(1, generator=gen)) < 0.5:
+            par = 1 - par
+        z = 1 + 2 * par + 4 * torch.randint(0, max(1, Kmax // 4), (n,), generator=gen)
+    else:
+        raise ValueError(f"thiết kế pixel không biết: {kind}")
+    w = (torch.remainder(vdc(Kmax).view(Kmax, 1) * z.view(1, n), Kmax).to(F64) + eps) / Kmax
+    return torch.remainder(pi.view(1, n) + w, 1.0), {"z": z, "pi": pi}
+
+
 def arc_coverage(phi: torch.Tensor, pi: torch.Tensor, K: int) -> torch.Tensor:
     """Số cung (độ dài 1/K, tính từ π_g) mà K pha đầu của mỗi patch rơi vào. (P,) — bằng K nếu phủ đủ."""
     rel = torch.remainder(phi[:K] - pi.view(1, -1), 1.0)
@@ -183,6 +209,14 @@ def patch_schedule(alpha: float, N: int, phase: torch.Tensor, gen) -> torch.Tens
     P = phase.shape[0]
     d = spi_increments(float(alpha), int(N), (P,), gen)
     return cum_nodes(anchor_rotate(d, phase))
+
+
+def pixel_schedule(alpha: float, N: int, shape, phase: torch.Tensor, gen) -> torch.Tensor:
+    """Thí nghiệm A: DP độc lập theo phần tử (dùng đúng số gia của S0 nếu cùng `gen` ⇒ common random numbers), chỉ đặt lại
+    vị trí số gia lớn nhất của từng phần tử tại ⌊N·φ_i⌋. -> Z (N+1, *shape) float64, mỗi đường ~ q_SPI."""
+    d = spi_increments(float(alpha), int(N), tuple(shape), gen)
+    Z = cum_nodes(anchor_rotate(d.reshape(int(N), -1), phase))
+    return Z.view((int(N) + 1,) + tuple(shape))
 
 
 def reverse_nodes(Z: torch.Tensor) -> torch.Tensor:

@@ -358,6 +358,91 @@ def test_T5_debug_settings():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# A / B / C
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("kind", ["global", "nbr"])
+def test_A_pixel_phase_coverage_and_uniform(kind):
+    shape, Kmax = (3, 6, 6), 16
+    n = 3 * 36
+    common = SM.common_phase_noise(n, Kmax, cgen(40))
+    phi, info = SM.pixel_phase_design(kind, shape, Kmax, cgen(41), common=common)
+    assert phi.shape == (Kmax, n) and torch.all((phi >= 0) & (phi < 1))
+    for K in (2, 4, 8, 16):
+        assert torch.all(SM.arc_coverage(phi, common[0], K) == K)
+    if kind == "nbr":                                                       # pixel kề ngang/dọc: z_i − z_j ≡ 2 (mod 4)
+        z = info["z"].view(shape)
+        assert torch.all(torch.remainder(z[:, :, 1:] - z[:, :, :-1], 4) == 2)
+        assert torch.all(torch.remainder(z[:, 1:, :] - z[:, :-1, :], 4) == 2)
+    vals = torch.stack([SM.pixel_phase_design(kind, (1, 2, 2), 8, cgen(500 + r))[0][3, 1] for r in range(3000)])
+    assert abs(float(vals.mean()) - 0.5) < 0.02 and abs(float(vals.var()) - 1 / 12) < 0.01
+
+
+def test_A_pixel_schedule_same_increments_as_S0():
+    """S2p dùng đúng số gia của S0 cùng khoá sinh: mỗi phần tử chỉ là phép xoay vòng của dãy số gia S0, anchor đúng ô thiết kế."""
+    shape, N = (3, 4, 4), 16
+    phi, _ = SM.pixel_phase_design("global", shape, 4, cgen(3))
+    Z0 = SM.spi_schedule(10.0, N, shape, gen(9))
+    Zp = SM.pixel_schedule(10.0, N, shape, phi[1], gen(9))
+    valid(Zp)
+    d0 = (Z0[1:] - Z0[:-1]).reshape(N, -1)
+    dp = (Zp[1:] - Zp[:-1]).reshape(N, -1)
+    assert torch.allclose(d0.sort(0).values, dp.sort(0).values, atol=1e-12)
+    assert torch.equal(dp.argmax(0), (phi[1] * N).floor().long())
+    assert not torch.allclose(Z0, Zp)
+
+
+def test_A_pixel_schedule_preserves_dp_moments():
+    alpha, N = 10.0, 16
+    shape = (1, 100, 200)
+    n = 20000
+    phi = torch.rand(n, generator=cgen(50), dtype=F64)
+    Z = SM.pixel_schedule(alpha, N, shape, phi, gen(51)).reshape(N + 1, -1)
+    t = torch.linspace(0, 1, N + 1, dtype=F64)
+    assert torch.allclose(Z.mean(1), t, atol=0.01)
+    assert torch.allclose(Z.var(1)[1:-1], (t * (1 - t) / (alpha + 1))[1:-1], rtol=0.1)
+
+
+def test_B_eta_one_is_exactly_spi():
+    shape, N = (3, 4, 4), 8
+    Zs = SM.spi_schedule(10.0, N, shape, gen(1))
+    phi, _ = SM.phase_design("indep", 4, 4, cgen(2), g=2)
+    Zp = SM.expand_patch(SM.patch_schedule(10.0, N, phi[0], gen(3)), SM.grid_elem_labels(shape, 2), shape)
+    assert torch.equal(SM.mix(Zp, Zs, 1.0), Zs)
+    assert torch.equal(SM.mix(Zp, Zs, 0.0), Zp)
+
+
+def test_ABC_registry_and_estimates():
+    from probe.sampling_benchmark import (blocks, digests, estimate, estimate_quad, label, method_paths, operator,
+                                          settings)
+    from probe.sampling_report import eta_of, holm_family
+    cfg = _cfg()
+    S = settings(cfg)
+    names = [b["name"] for b in blocks(S)]
+    assert {"pixel", "eta025", "eta05", "eta075", "eta1"} <= set(names)
+    pix = {"name": "pixel", "grid": S["grid"], "eta": S["eta"]}
+    for m in ("S2p", "S3p", "S4p"):
+        assert operator(m, 7, 0.0) == "spi" and label(m, pix, S) == m
+    assert method_paths("S3p", 7, 0.0, 8)[:2] == [("pix", "global", 0), ("pixR", "global", 0)]
+    est = estimate(cfg, S, 0.002, 0.0007)
+    assert est["blocks"]["primary"]["unique_paths_per_seed"] == 80
+    assert est["blocks"]["pixel"]["unique_paths_per_seed"] == 16 + 8 + 16
+    q = estimate_quad(S, 0.002, 0.0007)
+    assert q["grad_per_image"] == 48 * S["N"] * sum(S["quad_check"]["M"])
+    # thêm khối phụ / quad_check không làm mất cache của lượt chính
+    cfg2 = copy.deepcopy(cfg)
+    cfg2["sampling"]["secondary"] = cfg2["sampling"]["secondary"][:1]
+    cfg2["sampling"]["quad_check"]["M"] = [1, 2]
+    d0, d2 = digests(cfg, S), digests(cfg2, settings(cfg2))
+    assert d0["primary"] == d2["primary"] and d0["ref"] == d2["ref"] and d0["quad"] != d2["quad"]
+    assert eta_of("S2@g7e0.25", 7, 0.0) == 0.25 and eta_of("S2", 7, 0.0) == 0.0 and eta_of("S2@g14e0", 7, 0.0) is None
+    assert holm_family("vs_same_operator_S6", "S2@g7e0.5", "S6@g7e0.5", "insdel_blur") == "B_eta"
+    assert holm_family("vs_same_operator_S6", "S2@g14e0", "S6@g14e0", "insdel_blur") is None
+    assert holm_family("vs_S0", "S4p", "S0", "insdel_black") == "A_pixel"
+    assert holm_family("vs_S0", "S2", "S0", "insdel_blur") == "primary"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # thống kê của báo cáo
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -52,11 +52,15 @@ from .quad import Counter
 F64 = torch.float64
 P4_VERSION = 1
 PATCH_DESIGN = {"S2": "global", "S3": "global", "S4": "nbr", "S5": "fixed", "S6": "indep", "S7": "lime"}
-ALL_METHODS = ("S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7")
+PIXEL_DESIGN = {"S2p": "global", "S3p": "global", "S4p": "nbr"}          # thí nghiệm A: cân bằng, KHÔNG ghép patch
+SPI_OP = ("S0", "S1", "S2p", "S3p", "S4p")                                 # mỗi đường đúng q_SPI ⇒ operator spi
+ALL_METHODS = ("S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S2p", "S3p", "S4p")
 DESCR = {
     "S0": "SPI độc lập (sampler hiện tại)", "S1": "antithetic SPI", "S2": "patch, cân bằng toàn cục",
     "S3": "antithetic + cân bằng toàn cục", "S4": "patch, cân bằng lân cận", "S5": "patch, pha cố định (đối chứng)",
-    "S6": "patch, pha độc lập (đối chứng cùng operator)", "S7": "patch, thứ tự mềm LIME (cao → muộn)"}
+    "S6": "patch, pha độc lập (đối chứng cùng operator)", "S7": "patch, thứ tự mềm LIME (cao → muộn)",
+    "S2p": "pixel-independent, cân bằng toàn cục giữa các đường", "S3p": "antithetic + S2p",
+    "S4p": "pixel-independent, cân bằng cặp pixel kề"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -92,6 +96,13 @@ def settings(cfg: dict) -> dict:
                 raise SystemExit(f"phương pháp không biết: {m}")
             if m in ("S0", "S1"):
                 raise SystemExit("S0/S1 không phụ thuộc lưới/η — chỉ đặt trong primary")
+    qc = s.get("quad_check") or {}
+    if qc:
+        if any(int(m) < 1 for m in qc.get("M", [])):
+            raise SystemExit("quad_check.M ≥ 1")
+        for m in qc.get("methods", []):
+            if m not in ALL_METHODS:
+                raise SystemExit(f"quad_check: phương pháp không biết: {m}")
     return s
 
 
@@ -111,7 +122,7 @@ def patch_op(grid: int, eta: float) -> str:
 
 
 def operator(m: str, grid: int, eta: float) -> str:
-    if m in ("S0", "S1"):
+    if m in SPI_OP:
         return "spi"
     if m == "S7":
         return f"lime@g{grid}e{eta:g}"
@@ -119,18 +130,22 @@ def operator(m: str, grid: int, eta: float) -> str:
 
 
 def label(m: str, blk: dict, S: dict) -> str:
-    if m in ("S0", "S1") or (blk["grid"] == S["grid"] and blk["eta"] == S["eta"]):
+    if m in SPI_OP or (blk["grid"] == S["grid"] and blk["eta"] == S["eta"]):
         return m
     return f"{m}@g{blk['grid']}e{blk['eta']:g}"
 
 
 def method_paths(m: str, grid: int, eta: float, Kmax: int) -> list:
-    """Khoá đường theo thứ tự ensemble; ensemble K = K khoá đầu (S1/S3: K/2 cặp đầu)."""
+    """Khoá đường theo thứ tự ensemble; ensemble K = K khoá đầu (S1/S3/S3p: K/2 cặp đầu)."""
     h = Kmax // 2
     if m == "S0":
         return [("spi", k) for k in range(Kmax)]
     if m == "S1":
         return [x for j in range(h) for x in (("spi", j), ("spiR", j))]
+    if m == "S3p":
+        return [x for j in range(h) for x in (("pix", "global", j), ("pixR", "global", j))]
+    if m in PIXEL_DESIGN:
+        return [("pix", PIXEL_DESIGN[m], k) for k in range(Kmax)]
     if m == "S3":
         return [x for j in range(h) for x in (("pat", "global", grid, eta, j), ("patR", "global", grid, eta, j))]
     return [("pat", PATCH_DESIGN[m], grid, eta, k) for k in range(Kmax)]
@@ -156,6 +171,7 @@ def digests(cfg: dict, S: dict) -> dict:
     d = {"ref": _h({"base": base, "ref": S["reference"]}), "lime": _h({"base": base, "what": "lime"})}
     for b in blocks(S):
         d[b["name"]] = _h({"base": base, "block": b, "ref": S["reference"]})     # dòng RMSE phụ thuộc ref
+    d["quad"] = _h({"base": base, "quad": S.get("quad_check"), "ref": S["reference"]})
     return d
 
 
@@ -278,6 +294,18 @@ class Bank:
             self._phase[key] = phi
         return self._phase[key]
 
+    def pix_phase(self, design: str) -> torch.Tensor:
+        """Thí nghiệm A: pha theo phần tử (rows, C·H·W); π, ε dùng chung giữa các thiết kế pixel (common random numbers)."""
+        key = ("pix", design)
+        if key not in self._phase:
+            E = self.E
+            n = E.shape[0] * E.shape[1] * E.shape[2]
+            common = SM.common_phase_noise(n, self.rows, E.cgen("P4pixphase-common", self.tag, self.r, E.image))
+            phi, _ = SM.pixel_phase_design(design, E.shape, self.rows, E.cgen("P4pixphase", design, self.tag, self.r, E.image),
+                                           common=common)
+            self._phase[key] = phi
+        return self._phase[key]
+
     def Z(self, key) -> torch.Tensor:
         E, S = self.E, self.S
         kind = key[0]
@@ -285,6 +313,12 @@ class Bank:
             return SM.spi_schedule(S["alpha"], S["N"], E.shape, E.gen("P4spi", self.tag, self.r, E.image, key[1]))
         if kind == "spiR":
             return SM.reverse_nodes(self.Z(("spi", key[1])))
+        if kind in ("pix", "pixR"):
+            _, design, k = key
+            # cùng khoá sinh số gia với S0 đường k ⇒ cùng hình dạng, chỉ khác vị trí anchor (common random numbers)
+            Z = SM.pixel_schedule(S["alpha"], S["N"], E.shape, self.pix_phase(design)[k],
+                                  E.gen("P4spi", self.tag, self.r, E.image, k))
+            return SM.reverse_nodes(Z) if kind == "pixR" else Z
         if kind in ("pat", "patR"):
             _, design, grid, eta, k = key
             phi = self.phase(design, grid)[k]
@@ -356,6 +390,7 @@ def antithetic_rows(E: Env, blk: dict, r: int, paths: dict) -> tuple[list, list]
     pop = patch_op(grid, eta)
     fams = [("S1_antithetic", "spi", [(("spi", j), ("spiR", j)) for j in range(h)]),
             ("S0_independent", "spi", [(("spi", j), ("spi", j + h)) for j in range(h)]),
+            ("S3p_antithetic", "spi", [(("pix", "global", j), ("pixR", "global", j)) for j in range(h)]),
             ("S3_antithetic", pop, [(("pat", "global", grid, eta, j), ("patR", "global", grid, eta, j)) for j in range(h)]),
             ("S6_independent", pop, [(("pat", "indep", grid, eta, j), ("pat", "indep", grid, eta, j + h)) for j in range(h)])]
     indep_keys = {"spi": [("spi", k) for k in range(S["Kmax"])],
@@ -420,14 +455,14 @@ def block_seed(E: Env, blk: dict, r: int, cdir: str, dgs: dict) -> dict:
     signed = bool(S.get("signed_ranking_secondary", False))
     for m, ks in mk.items():
         lm, op = label(m, blk, S), operator(m, grid, eta)
-        g_m = grid if m not in ("S0", "S1") else S["grid"]
+        g_m = grid if m not in SPI_OP else S["grid"]
         for K in Ks:
             sel = ks[:K]
             A = torch.stack([paths[k]["A"] for k in sel]).mean(0)
             last = K == Kmax
             q, cv = quality(E, A, E.ref.get(op), curves=(last and r == 0), signed=(last and signed))
             rows["per_seed"].append({"image": E.image, "block": blk["name"], "method": lm, "base": m, "grid": g_m,
-                                     "eta": 0.0 if m in ("S0", "S1") else eta, "operator": op, "K": K, "seed": r,
+                                     "eta": 0.0 if m in SPI_OP else eta, "operator": op, "K": K, "seed": r,
                                      "B_grad": K * N * M, "B_prior_fwd": int(E.lime[grid]["n_queries"]) if m == "S7" else 0,
                                      "n_unique_paths": len(set(sel)), **q})
             maps[(lm, K)] = A.float().cpu()
@@ -448,10 +483,17 @@ def block_seed(E: Env, blk: dict, r: int, cdir: str, dgs: dict) -> dict:
                                      "grid": g_m, "K": K, "seed": r, **cov})
             if last and r == 0:
                 heat[lm] = {"amap": A.abs().sum(0).half().cpu(), "signed": A.sum(0).half().cpu()}
+    for m in mk:                                    # thí nghiệm A: độ phủ pha theo phần tử (thiết kế, không phải τ thật)
+        if m in PIXEL_DESIGN and m != "S3p":
+            phi = bank.pix_phase(PIXEL_DESIGN[m])
+            pi_ = SM.common_phase_noise(phi.shape[1], bank.rows, E.cgen("P4pixphase-common", "ens", r, E.image))[0]
+            for K in Ks:
+                rows["coverage_pixel"].append({"image": E.image, "block": blk["name"], "method": label(m, blk, S), "K": K,
+                                               "seed": r, "elem_arc_cover": float(SM.arc_coverage(phi, pi_, K).double().mean()) / K})
     for key, pr in paths.items():
         s = float(pr["A"].sum())
         rows["paths"].append({"image": E.image, "block": blk["name"], "seed": r, "path": kstr(key), "kind": key[0],
-                              "design": key[1] if key[0] in ("pat", "patR") else "spi", "sumA": s, "D": E.D,
+                              "design": key[1] if key[0] in ("pat", "patR", "pix", "pixR") else "spi", "sumA": s, "D": E.D,
                               "resid_rel": (s - E.D) / abs(E.D) if E.D else float("nan"), "d_hat": pr["d_hat"],
                               "tau_patch_sd": float(pr["tau"].std())})
     pr_rows, pooled = antithetic_rows(E, blk, r, paths)
@@ -579,6 +621,130 @@ def run_reference(E: Env) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# thí nghiệm C — độ nhạy theo số điểm cầu phương M trên CÙNG tập đường
+# ─────────────────────────────────────────────────────────────────────────────
+
+def quad_check(E: Env) -> dict:
+    """Cùng đường (ngân hàng 'ens', seed quad_check.seed ⇒ đúng các đường của thí nghiệm chính), cầu phương phân tầng M điểm/đoạn
+    với mọi M trong quad_check.M. M = sampling.M dùng đúng khoá cầu phương của thí nghiệm chính (kết quả trùng). So mỗi M với
+    M_max: completeness, InsDel, hạng. Đây là kiểm tra độ chính xác số, KHÔNG phải so sánh công bằng ngân sách (B = K·N·M)."""
+    S = E.S
+    qc = S["quad_check"]
+    Ms = sorted({int(m) for m in qc["M"]})
+    Mref = Ms[-1]
+    r = int(qc.get("seed", 0))
+    Kmax, Ks, N = S["Kmax"], S["K"], S["N"]
+    grid, eta = S["grid"], S["eta"]
+    blk0 = {"name": "quad", "grid": grid, "eta": eta}
+    bank = Bank(E, r, "ens")
+    mk = {m: method_paths(m, grid, eta, Kmax) for m in qc["methods"]}
+    uniq = list(dict.fromkeys(k for ks in mk.values() for k in ks))
+    rows = defaultdict(list)
+    t0, n0 = time.time(), Counter.n
+    A = {}
+    for key in uniq:
+        Z = bank.Z(key)
+        X = SM.nodes(E.x0, E.dx, Z)
+        for M in Ms:
+            qtag = "" if M == S["M"] else f"M{M}"
+            a, _ = aw_stream(E.fn, X, M, E.gen("P4q", "ens", r, E.image, qtag, *key), E.ctx.batch)
+            A[(key, M)] = a.cpu()
+            s = float(a.sum())
+            rows["quad_paths"].append({"image": E.image, "path": kstr(key), "M": M, "seed": r, "sumA": s, "D": E.D,
+                                       "resid_rel": (s - E.D) / abs(E.D) if E.D else float("nan")})
+        del Z, X
+    sync()
+    t_grad, n_grad = time.time() - t0, Counter.n - n0
+    t1, f1 = time.time(), SM.FwdCounter.n
+    for m, ks in mk.items():
+        lm, op = label(m, blk0, S), operator(m, grid, eta)
+        for K in Ks:
+            sel = ks[:K]
+            ens = {M: torch.stack([A[(k, M)] for k in sel]).mean(0).to(E.ctx.dev) for M in Ms}
+            qs = {M: quality(E, ens[M], E.ref.get(op))[0] for M in Ms}
+            ref_m = ens[Mref]
+            for M in Ms:
+                row = {"image": E.image, "method": lm, "operator": op, "K": K, "M": M, "M_ref": Mref, "seed": r,
+                       "B_grad": K * N * M, **qs[M]}
+                row["rel_l2_vs_Mmax"] = float((ens[M] - ref_m).norm()) / max(float(ref_m.norm()), 1e-300)
+                row["cos_vs_Mmax"] = _cos(ens[M], ref_m)
+                row["spearman_vs_Mmax"] = spearman(ens[M].float(), ref_m.float())
+                row["topk_vs_Mmax"] = topk_overlap(ens[M].float(), ref_m.float(), E.topk, E.perm)
+                for b in S["insdel_bases"]:
+                    row[f"d_insdel_{b}_vs_Mmax"] = qs[M][f"insdel_{b}"] - qs[Mref][f"insdel_{b}"]
+                rows["quad"].append(row)
+            del ens
+    sync()
+    rows["budget"].append({"image": E.image, "block": "quad", "seed": r, "part": "quad_check", "grad_evals": n_grad,
+                           "fwd_evals": SM.FwdCounter.n - f1, "seconds_grad": t_grad, "seconds_metrics": time.time() - t1,
+                           "unique_paths": len(uniq), "nominal_paths": len(uniq) * len(Ms), "evals_per_path": N * sum(Ms)})
+    return {"rows": dict(rows)}
+
+
+def process_quad(ctx: Ctx, S: dict, out: str, idx: int, dgs: dict) -> None:
+    image = f"seg{idx:05d}"
+    cdir = os.path.join(out, "cache", image)
+    os.makedirs(cdir, exist_ok=True)
+    qp = os.path.join(cdir, "quad.pt")
+    if _load(qp, dgs["quad"]) is not None:
+        print(f"    [quad] {image}: đã có, bỏ qua")
+        return
+    E = Env(ctx, S, idx)
+    ip = os.path.join(cdir, "image.pt")
+    if not os.path.exists(ip):
+        torch.save({"info": E.info(), "x": E.it.x.half(), "mask": E.mask.cpu()}, ip)
+    ref = _load(os.path.join(cdir, "ref.pt"), dgs["ref"])          # chỉ dùng nếu đã có (không tính thêm)
+    if ref is not None:
+        E.ref = ref["refs"]
+    t0, n0 = time.time(), Counter.n
+    obj = quad_check(E)
+    obj["digest"] = dgs["quad"]
+    torch.save(obj, qp)
+    print(f"    [quad] {image}: {Counter.n - n0} grad eval, {time.time() - t0:.0f}s", flush=True)
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def estimate_quad(S: dict, per_eval: float, per_fwd: float) -> dict:
+    qc = S["quad_check"]
+    Ms = sorted({int(m) for m in qc["M"]})
+    uniq = len({k for m in qc["methods"] for k in method_paths(m, S["grid"], S["eta"], S["Kmax"])})
+    grad = uniq * S["N"] * sum(Ms)
+    fwd = len(qc["methods"]) * len(S["K"]) * len(Ms) * len(S["insdel_bases"]) * 2 * (int(S["insdel_steps"]) + 1)
+    n = int(qc["n_images"])
+    return {"grad_per_image": grad, "fwd_per_image": fwd, "n_images": n, "minutes": n * (grad * per_eval + fwd * per_fwd) / 60}
+
+
+def run_quad(ctx: Ctx) -> None:
+    from .pilot import bench
+    cfg = ctx.cfg
+    S = settings(cfg)
+    if not S.get("quad_check"):
+        raise SystemExit("config thiếu sampling.quad_check")
+    out = sampling_out(cfg)
+    dgs = digests(cfg, S)
+    idxs = ctx.sp["pilot"][:int(S["quad_check"]["n_images"])]
+    b = bench(ctx)
+    pf = bench_fwd(ctx)
+    est = estimate_quad(S, b["per_eval"], pf)
+    print(f"[sampling-quad] M = {sorted(S['quad_check']['M'])}, phương pháp {S['quad_check']['methods']}, {len(idxs)} ảnh: "
+          f"{est['grad_per_image']} grad + {est['fwd_per_image']} fwd mỗi ảnh ≈ {est['minutes']:.1f} phút")
+    lim = float((S.get("budget") or {}).get("quad_minutes", 30)) * float((S.get("budget") or {}).get("slack", 1.25))
+    if est["minutes"] > lim and (S.get("budget") or {}).get("enforce", True):
+        raise SystemExit(f"[sampling-quad] ước tính {est['minutes']:.1f} phút > giới hạn {lim:.1f} (budget.quad_minutes × slack)")
+    t0 = time.time()
+    for j, idx in enumerate(idxs):
+        print(f"  [sampling/quad] ảnh {j + 1}/{len(idxs)} seg{idx:05d}", flush=True)
+        process_quad(ctx, S, out, idx, dgs)
+    write_csvs(out, [f"seg{i:05d}" for i in image_indices(ctx, S)], S)
+    with open(os.path.join(out, "meta_quad.json"), "w") as fh:
+        json.dump({"time": _dt.datetime.now().isoformat(timespec="seconds"), "indices": [int(i) for i in idxs],
+                   "quad_check": S["quad_check"], "estimate": est, "bench": {**b, "per_fwd": pf},
+                   "minutes": (time.time() - t0) / 60, "digest": dgs["quad"], "provenance": provenance(cfg)},
+                  fh, indent=1, default=str)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ước tính, kế hoạch
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -620,7 +786,22 @@ def estimate(cfg: dict, S: dict, per_eval: float, per_fwd: float) -> dict:
     return out
 
 
-def plan(S: dict, est: dict) -> dict:
+def cached_blocks(out: str, names: list, S: dict, dgs: dict) -> set:
+    """Khối phụ đã có tóm tắt (đúng hash) cho MỌI ảnh ⇒ không tốn thêm ngân sách."""
+    done = set()
+    for blk in blocks(S)[1:]:
+        ok = True
+        for im in names:
+            p = os.path.join(out, "cache", im, f"{blk['name']}_summary.pt")
+            if not os.path.exists(p) or torch.load(p, weights_only=False).get("digest") != dgs[blk["name"]]:
+                ok = False
+                break
+        if ok:
+            done.add(blk["name"])
+    return done
+
+
+def plan(S: dict, est: dict, cached: set | None = None) -> dict:
     bud = S.get("budget", {}) or {}
     slack = float(bud.get("slack", 1.25))
     prim = est["blocks"]["primary"]["minutes"] + est["blocks"].get("ref", {}).get("minutes", 0.0) + est["env_minutes"]
@@ -628,7 +809,7 @@ def plan(S: dict, est: dict) -> dict:
     ok = prim <= lim
     run_sec, skip_sec, acc = [], [], 0.0
     for blk in blocks(S)[1:]:
-        m = est["blocks"][blk["name"]]["minutes"]
+        m = 0.0 if blk["name"] in (cached or set()) else est["blocks"][blk["name"]]["minutes"]
         if acc + m <= float(bud.get("secondary_minutes", 0)) * slack:
             run_sec.append(blk["name"])
             acc += m
@@ -773,6 +954,10 @@ def write_csvs(out: str, names: list, S: dict) -> None:
             allrows["budget"].append({"image": im, "block": f"lime_g{lo['grid']}", "seed": -1, "part": "lime_prior",
                                       "grad_evals": 0, "fwd_evals": lo["n_queries"], "seconds_grad": 0.0,
                                       "seconds_metrics": lo.get("seconds", float("nan"))})
+        qp = os.path.join(cdir, "quad.pt")
+        if os.path.exists(qp):
+            for k, rs in torch.load(qp, weights_only=False)["rows"].items():
+                allrows[k] += rs
         for blk in blocks(S):
             sp = os.path.join(cdir, f"{blk['name']}_summary.pt")
             if not os.path.exists(sp):
@@ -791,7 +976,8 @@ def write_csvs(out: str, names: list, S: dict) -> None:
     rename = {"per_seed": "sampling_per_seed", "per_image": "sampling_per_image", "coverage": "sampling_coverage",
               "covariance": "sampling_covariance", "cov_pairs": "sampling_covariance_pairs", "budget": "sampling_budget",
               "paths": "sampling_paths", "locality": "sampling_locality", "curves": "sampling_curves", "ref": "sampling_ref",
-              "lime": "sampling_lime", "images": "sampling_images"}
+              "lime": "sampling_lime", "images": "sampling_images", "quad": "sampling_quad",
+              "quad_paths": "sampling_quad_paths", "coverage_pixel": "sampling_coverage_pixel"}
     for k, rs in allrows.items():
         if rs:
             pd.DataFrame(rs).to_csv(os.path.join(out, f"{rename.get(k, 'sampling_' + k)}.csv"), index=False)
@@ -819,7 +1005,10 @@ def run(ctx: Ctx, estimate_only: bool = False) -> None:
     b = bench(ctx)
     pf = bench_fwd(ctx)
     est = estimate(cfg, S, b["per_eval"], pf)
-    pl = plan(S, est)
+    cached = cached_blocks(out, names, S, dgs)
+    if cached:
+        print(f"[sampling] khối phụ đã có cache đầy đủ (0 phút): {sorted(cached)}")
+    pl = plan(S, est, cached)
     print_estimate(S, est, pl, len(idxs))
     if estimate_only:
         return
