@@ -39,7 +39,9 @@ python -m probe [--config config.yaml] [--debug] [--device cuda] <lệnh>
   sampling-estimate  P4: đo GPU, in ước tính phút từng khối và kế hoạch theo ngân sách (không chạy thí nghiệm)
   sampling-report    P4: dựng lại thống kê, đồ thị, báo cáo từ CSV đã có (không chạy mô hình)
   sampling-quad      P4-C: cùng tập đường, cầu phương M ∈ quad_check.M trên vài ảnh → sampling_quad.csv + mục C của báo cáo
-  sampling-pathscore P4-D: InsDel của TỪNG đường trong K đường (best/worst so với trung bình, proxy chọn đường) → mục D
+  pathscore          eval riêng: InsDel của TỪNG đường SPI, đánh giá chéo nền mask blur/black/white/grey/mean
+                     → <out>/pilot/pathscore/ + <out>/pilot/ATTR_PROBE_PATHSCORE_REPORT.md
+  pathscore-report   dựng lại báo cáo pathscore từ CSV (không chạy mô hình)
 
 Kết quả: <local.out>[_debug]/pilot/. Chạy lại sẽ bỏ qua ảnh đã có trong cache (cùng hash config).
 """
@@ -63,7 +65,8 @@ def main(argv=None) -> None:
                                     "e8", "e8-report", "e9", "e9-report",
                                     "ocs", "ocs-report", "e10", "e10-report",
                                     "e11", "e11-report", "e12", "e12-report",
-                                    "sampling", "sampling-estimate", "sampling-report", "sampling-quad", "sampling-pathscore"])
+                                    "sampling", "sampling-estimate", "sampling-report", "sampling-quad",
+                                    "pathscore", "pathscore-report"])
     args = ap.parse_args(argv)
     cfg = C.load(args.config, debug=args.debug)
 
@@ -76,11 +79,16 @@ def main(argv=None) -> None:
         if args.cmd == "sampling-quad":
             from .pilot import Ctx
             SB.run_quad(Ctx(cfg, args.device))
-        if args.cmd == "sampling-pathscore":
-            from .pilot import Ctx
-            SB.run_pathscore(Ctx(cfg, args.device))
         if args.cmd != "sampling-estimate":
             wsr(SB.sampling_out(cfg), cfg)
+        return
+
+    if args.cmd.startswith("pathscore"):
+        from . import pathscore as PS
+        if args.cmd == "pathscore":
+            from .pilot import Ctx
+            PS.run(Ctx(cfg, args.device))
+        PS.write_report(cfg)
         return
 
     if args.cmd == "report":

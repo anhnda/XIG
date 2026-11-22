@@ -39,11 +39,14 @@
 #   sampling-pilot     P4 đầy đủ (ref → primary → khối phụ trong ngân sách) → runs_probe/pilot/ATTR_PROBE_SAMPLING_REPORT.md
 #   sampling-report    dựng lại thống kê + đồ thị + báo cáo P4 từ CSV (DEBUG=1 cho thư mục debug)
 #   sampling-quad      thí nghiệm C: cùng tập đường, M ∈ sampling.quad_check.M trên vài ảnh (DEBUG=1 cho debug)
-#   sampling-pathscore thí nghiệm D: InsDel từng đường trong K đường SPI — best/worst so với trung bình (DEBUG=1 cho debug)
+#   PATHSCORE — eval riêng (tách khỏi P4): InsDel từng đường SPI, đánh giá chéo nền mask blur/black/white/grey/mean
+#   pathscore          → runs_probe/pilot/pathscore/ + runs_probe/pilot/ATTR_PROBE_PATHSCORE_REPORT.md
+#   pathscore-debug    bản debug (ít ảnh, N = 8) → runs_probe_debug/pilot/ATTR_PROBE_PATHSCORE_REPORT.md
+#   pathscore-report   dựng lại báo cáo từ CSV (DEBUG=1 cho thư mục debug)
 # env: CFG=config.yaml, EXTRA="--device cuda:1"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report|mech-debug|mech|mech-e1|mech-e23|mech-report|cross-debug|cross|cross-gate|cross-e4|cross-e4c|cross-e4d|cross-e4d-debug|cross-report|e5-debug|e5|e5-report|e6-debug|e6|e6-report|e7-debug|e7|e7-report|e8-debug|e8|e8-report|e9-debug|e9|e9-report|ocs-debug|ocs|ocs-report|e10-debug|e10|e10-report|e11-debug|e11|e11-report|e12-debug|e12|e12-report|sampling-test|sampling-debug|sampling-estimate|sampling-pilot|sampling-report|sampling-quad|sampling-pathscore}
+STAGE=${1:?stage: test|debug|estimate|conv|main|pilot|report|mech-debug|mech|mech-e1|mech-e23|mech-report|cross-debug|cross|cross-gate|cross-e4|cross-e4c|cross-e4d|cross-e4d-debug|cross-report|e5-debug|e5|e5-report|e6-debug|e6|e6-report|e7-debug|e7|e7-report|e8-debug|e8|e8-report|e9-debug|e9|e9-report|ocs-debug|ocs|ocs-report|e10-debug|e10|e10-report|e11-debug|e11|e11-report|e12-debug|e12|e12-report|sampling-test|sampling-debug|sampling-estimate|sampling-pilot|sampling-report|sampling-quad|pathscore|pathscore-debug|pathscore-report}
 CFG=${CFG:-config.yaml}
 EXTRA=${EXTRA:-}
 PY="python -m probe --config $CFG $EXTRA"
@@ -93,13 +96,15 @@ case "$STAGE" in
     OUTD=$(python -c "import yaml,sys; c=yaml.safe_load(open('$CFG')); print((c.get('local') or {}).get('out','runs_probe'))")/pilot/sampling
     mkdir -p "$OUTD"
     { echo "# P4 sampling-test — $(date -Iseconds)"; python -c "import torch,torchvision; print('torch', torch.__version__, 'torchvision', torchvision.__version__)";
-      python -m pytest -q tests/test_sampling.py tests/test_units.py 2>&1; } | tee "$OUTD/tests_report.txt"
+      python -m pytest -q tests/test_sampling.py tests/test_pathscore.py tests/test_units.py 2>&1; } | tee "$OUTD/tests_report.txt"
     exit "${PIPESTATUS[0]}" ;;
   sampling-debug) $PY --debug sampling ;;
   sampling-estimate) $PY sampling-estimate ;;
   sampling-pilot) $PY sampling ;;
   sampling-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug sampling-report; else $PY sampling-report; fi ;;
   sampling-quad) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug sampling-quad; else $PY sampling-quad; fi ;;
-  sampling-pathscore) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug sampling-pathscore; else $PY sampling-pathscore; fi ;;
+  pathscore) $PY pathscore ;;
+  pathscore-debug) $PY --debug pathscore ;;
+  pathscore-report) if [ "${DEBUG:-0}" = "1" ]; then $PY --debug pathscore-report; else $PY pathscore-report; fi ;;
   *) echo "stage không biết: $STAGE"; exit 1 ;;
 esac

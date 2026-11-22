@@ -37,6 +37,16 @@ runner: `probe/sampling_benchmark.py`; thống kê + báo cáo: `probe/sampling_
 Bị ngắt thì chạy lại cùng lệnh: (ảnh × khối × seed) đã xong được bỏ qua. Nếu ước tính phần chính vượt
 `sampling.budget.minutes × slack` thì chương trình dừng trước khi chạy (đặt `budget.enforce: false` để bỏ qua).
 
+## PATHSCORE — eval riêng: InsDel của từng đường SPI, đánh giá chéo nền mask
+
+```bash
+bash scripts/run.sh pathscore          # → runs_probe/pilot/pathscore/ + runs_probe/pilot/ATTR_PROBE_PATHSCORE_REPORT.md
+bash scripts/run.sh pathscore-debug    # bản debug
+bash scripts/run.sh pathscore-report   # dựng lại báo cáo từ CSV
+```
+
+Cấu hình ở mục `pathscore:` (hash riêng; tách khỏi P4). Module: `probe/pathscore.py`; test: `tests/test_pathscore.py`.
+
 ## Cấu trúc
 
 | file | nội dung |

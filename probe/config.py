@@ -12,7 +12,7 @@ import torch
 import yaml
 
 UNHASHED = ("local", "debug", "mechanism", "cross", "e5", "e6", "e7", "e8", "e9", "ocs", "e10", "e11", "e12",
-            "sampling")    # các mục có hash riêng (mechanism.py, …, sampling_benchmark.py), không làm mất cache pilot
+            "sampling", "pathscore")    # các mục có hash riêng (mechanism.py, …, sampling_benchmark.py), không làm mất cache pilot
 
 
 def _merge(base: dict, over: dict) -> dict:

@@ -310,8 +310,6 @@ sampling:
     - {name: grid14, methods: [S6, S2, S4], grid: 14}
   # C — cùng tập đường (seed `seed` của ensemble chính), cầu phương M điểm/đoạn; lệnh riêng: bash scripts/run.sh sampling-quad
   quad_check: {n_images: 4, seed: 0, M: [1, 2, 4, 8], methods: [S0, S2, S6]}
-  # D — InsDel của TỪNG đường: K đường (seed r = đúng các đường S0 của ensemble chính), lệnh: bash scripts/run.sh sampling-pathscore
-  path_scores: {n_images: 16, seeds: 2, K: 16, methods: [S0], top_frac: 0.05}
   lime: {n_samples: 256, kernel_width: 0.25, ridge: 1.0, tau: 0.25}    # S7: prior thứ tự mềm (high-last); forward tính riêng
   insdel_bases: [blur, black]
   insdel_steps: 50
@@ -319,8 +317,19 @@ sampling:
   overlap_tol: 0.125         # hai patch "chồng thời gian" nếu |τ_g − τ_h| < tol
   locality: {n_null: 20}     # D3: số hoán vị cho mức nền
   keep_seed_maps: false      # giữ bản đồ ensemble từng seed trong cache sau khi đã tổng hợp ảnh
-  budget: {minutes: 30, secondary_minutes: 120, quad_minutes: 30, pathscore_minutes: 30, slack: 1.25, enforce: true}
+  budget: {minutes: 30, secondary_minutes: 120, quad_minutes: 30, slack: 1.25, enforce: true}
   stats: {bootstrap: 10000, seed: 4, alpha: 0.05, min_effect: 0.01, min_images: 16, win_frac: 0.5}
+
+# PATHSCORE — eval riêng (tách khỏi P4): InsDel của TỪNG đường SPI, đánh giá chéo giữa các nền mask của InsDel.
+# Dùng chung từ `sampling:` các tham số để so được: SPI α, N (paths.spi10), M, insdel_steps, stats.bootstrap. Hash riêng.
+pathscore:
+  n_images: 16               # tiền tố split pilot
+  seeds: 2                   # số bộ K đường độc lập mỗi ảnh
+  K: 16                      # số đường SPI mỗi bộ
+  mask_bases: [blur, black, white, grey, mean]    # nền mask InsDel; mean = màu trung bình theo kênh của chính ảnh
+  top_frac: 0.05             # proxy top_mass
+  budget_minutes: 30
+  enforce_budget: true
 
 debug:
   sampling: {n_images: 2, seeds: 2, K: [2, 4], insdel_steps: 10,
@@ -328,9 +337,9 @@ debug:
              secondary: [{name: pixel, methods: [S2p, S3p, S4p]}, {name: eta05, methods: [S6, S2, S4], eta: 0.5},
                          {name: eta1, methods: [S6, S2, S4], eta: 1.0}, {name: controls, methods: [S5, S7]}],
              quad_check: {n_images: 1, M: [1, 2, 4]},
-             path_scores: {n_images: 2, seeds: 1, K: 4},
              lime: {n_samples: 32}, locality: {n_null: 2}, stats: {bootstrap: 200, min_images: 2},
              budget: {enforce: false, secondary_minutes: 1000}}
+  pathscore: {n_images: 2, seeds: 1, K: 4, enforce_budget: false}
   e12: {split: pilot, n_images: 1, N: 8, M: 2, K: 4, levels: {dp: [1, 10]}, gate: {n_images: 1, K: 2, M: [2, 4], M_hi: 4},
         insdel_steps: 10}
   e11: {n_images: 1, N: 8, K: 2, paths: [ig, "dp:10", smooth, "rgb:10"], calib: {d: 2000}, mu_iter: 50, insdel_steps: 10}
