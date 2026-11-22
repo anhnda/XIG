@@ -328,7 +328,7 @@ def _boot(v, B: int, seed: int) -> tuple:
 
 
 def summarize(df, keys: list, cols: list, B: int, seed: int):
-    """Trung bình seed trong ảnh trước, rồi trung bình + CI bootstrap theo ảnh."""
+    """Trung bình seed trong ảnh trước; rồi qua các ảnh: mean, std (ddof = 1), min, max, CI 95% bootstrap của mean."""
     import pandas as pd
     pim = df.groupby(keys + ["image"])[cols].mean().reset_index()
     rows = []
@@ -337,9 +337,31 @@ def summarize(df, keys: list, cols: list, B: int, seed: int):
         r = dict(zip(keys, kv))
         r["n_images"] = len(g)
         for c in cols:
-            m, lo, hi = _boot(g[c].values, B, seed)
+            v = g[c].values.astype(float)
+            v = v[np.isfinite(v)]
+            m, lo, hi = _boot(v, B, seed)
             r[c], r[f"{c}_lo95"], r[f"{c}_hi95"] = m, lo, hi
+            r[f"{c}_std"] = float(np.std(v, ddof=1)) if len(v) > 1 else np.nan
+            r[f"{c}_min"] = float(np.min(v)) if len(v) else np.nan
+            r[f"{c}_max"] = float(np.max(v)) if len(v) else np.nan
         rows.append(r)
+    return pd.DataFrame(rows)
+
+
+def long_stats(df, keys: list, cols: list, names: dict | None = None):
+    """Bảng dài: một dòng / (khoá, đại lượng) với mean, std, min, max, lo95, hi95 (từ kết quả của summarize)."""
+    import pandas as pd
+    rows = []
+    for _, r in df.iterrows():
+        for c in cols:
+            if c not in df:
+                continue
+            row = {k: r[k] for k in keys}
+            row["đại lượng"] = (names or {}).get(c, c)
+            row["n_images"] = r.get("n_images")
+            for s, suf in (("mean", ""), ("std", "_std"), ("min", "_min"), ("max", "_max"), ("lo95", "_lo95"), ("hi95", "_hi95")):
+                row[s] = r.get(f"{c}{suf}", np.nan)
+            rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -527,7 +549,7 @@ def write_report(cfg: dict) -> str:
     sp = sp.sort_values("metric")
     cs = summarize(st_["cross"], ["select_on", "eval_on"], ["best_gain", "best_rank", "worst_gain", "worst_rank", "spi_gain"], B, seed)
     cr = summarize(st_["corr"], ["a", "b"], ["spearman"], B, seed)
-    bom = st_["bestofm"].groupby(["metric", "m", "image"]).gain.mean().groupby(["metric", "m"]).mean().reset_index()
+    bom = summarize(st_["bestofm"], ["metric", "m"], ["gain"], B, seed)
     px = summarize(st_["proxy"], ["metric", "proxy"], ["rho", "select_gain", "oracle_gain", "spi_gain"], B, seed) \
         if len(st_["proxy"]) else None
     for name, df in (("pathscore_spread", sp), ("pathscore_cross", cs), ("pathscore_corr", cr), ("pathscore_bestofm", bom),
@@ -537,20 +559,33 @@ def write_report(cfg: dict) -> str:
     files = make_figures(out, bases, cs, cr, sp, bom, paths, K)
     n_img, n_seed = int(paths.image.nunique()), int(paths.seed.nunique())
 
-    # tóm tắt đầu báo cáo
+    # tóm tắt đầu báo cáo — mean, std, min, max QUA CÁC ẢNH (mỗi ảnh: trung bình seed, rồi trung bình các ô / metric)
     off = cs[cs.select_on != cs.eval_on]
-    diag = cs[cs.select_on == cs.eval_on]
+    xs = st_["cross"].groupby(["select_on", "eval_on", "image"])[["best_gain", "best_rank"]].mean().reset_index()
+    is_off = xs.select_on != xs.eval_on
+    sp_im = st_["spread"].groupby(["metric", "image"])[["spi_minus_mean"]].mean().reset_index()
+    cr_im = st_["corr"].groupby(["a", "b", "image"]).spearman.mean().reset_index()
+
+    def mm(v) -> str:
+        v = np.asarray(v, dtype=float)
+        v = v[np.isfinite(v)]
+        if not len(v):
+            return "—"
+        sd = np.std(v, ddof=1) if len(v) > 1 else float("nan")
+        return f"mean {fmt(v.mean())}, std {fmt(sd)}, min {fmt(v.min())}, max {fmt(v.max())}"
+
     L.append("## Tóm tắt\n")
-    L.append(f"- {n_img} ảnh × {n_seed} seed × K = {K} đường SPI; metric = InsDel với nền mask {bases}.")
-    L.append(f"- Đường tốt nhất **trên chính metric dùng để chọn**: hơn trung bình các đường {fmt(diag.best_gain.mean())} "
-             f"(trung bình {len(diag)} metric).")
-    L.append(f"- Cùng đường đó **chấm theo metric khác**: hơn trung bình {fmt(off.best_gain.mean())} (trung bình {len(off)} cặp; "
-             f"min {fmt(off.best_gain.min())}, max {fmt(off.best_gain.max())}); hạng trung bình {fmt(off.best_rank.mean())}/{K} "
-             f"(ngẫu nhiên = {(K + 1) / 2:g}). Số cặp có CI 95% > 0: {int((off.best_gain_lo95 > 0).sum())}/{len(off)}.")
-    L.append(f"- SPI {K} đường (trung bình cộng các bản đồ) hơn trung bình các đường {fmt(sp.spi_minus_mean.mean())} "
-             f"(trung bình các metric; từng metric ở mục 2).")
-    L.append(f"- Tương quan hạng điểm của {K} đường giữa hai metric khác nhau: trung bình "
-             f"{fmt(cr[cr.a != cr.b].spearman.mean())}.\n")
+    L.append(f"- {n_img} ảnh × {n_seed} seed × K = {K} đường SPI; metric = InsDel với nền mask {bases}. Trong các dòng dưới, "
+             "mean / std / min / max là **qua các ảnh** (mỗi ảnh: trung bình seed, rồi trung bình các ô / metric được nêu).")
+    L.append(f"- Đường tốt nhất **trên chính metric dùng để chọn** (đường chéo), hơn trung bình các đường: "
+             f"{mm(xs[~is_off].groupby('image').best_gain.mean())}.")
+    L.append(f"- Cùng đường đó **chấm theo metric khác** (ngoài đường chéo), hơn trung bình các đường: "
+             f"{mm(xs[is_off].groupby('image').best_gain.mean())}; hạng ({K} đường, ngẫu nhiên = {(K + 1) / 2:g}): "
+             f"{mm(xs[is_off].groupby('image').best_rank.mean())}. Theo từng cặp (trung bình ảnh): min {fmt(off.best_gain.min())}, "
+             f"max {fmt(off.best_gain.max())}; số cặp có CI 95% > 0: {int((off.best_gain_lo95 > 0).sum())}/{len(off)}.")
+    L.append(f"- SPI {K} đường (trung bình cộng các bản đồ) hơn trung bình các đường: {mm(sp_im.groupby('image').spi_minus_mean.mean())}.")
+    L.append(f"- Tương quan hạng điểm của {K} đường giữa hai metric khác nhau: "
+             f"{mm(cr_im[cr_im.a != cr_im.b].groupby('image').spearman.mean())}.\n")
     L.append("![ma trận](pathscore/pathscore_cross_matrix.png)\n")
     L.append("![dot](pathscore/pathscore_cross_dots.png)\n")
 
@@ -568,17 +603,21 @@ def write_report(cfg: dict) -> str:
                  f"`{str((meta.get('digests') or {}).get('scores', ''))[:12]}`; seed toàn cục {meta.get('global_seed')}.")
     L.append("- 'Đường tốt nhất' chọn bằng CHÍNH metric trên chính ảnh = oracle (cận trên lạc quan, không phải phương pháp).\n")
 
+    STAT = ["mean", "std", "min", "max", "lo95", "hi95"]
     L.append("## 2. Từng metric: đường tốt nhất / kém nhất / SPI so với trung bình các đường\n")
-    L.append(md(sp, [c for c in ("metric", "n_images", "mean_path", "sd_path", "best_minus_mean", "best_minus_mean_lo95",
-                                 "best_minus_mean_hi95", "mean_minus_worst", "mean_minus_worst_lo95", "mean_minus_worst_hi95",
-                                 "spi", "spi_minus_mean", "spi_minus_mean_lo95", "spi_minus_mean_hi95", "best_minus_spi",
-                                 "frac_paths_above_spi") if c in sp]))
+    L.append("Mỗi dòng: một đại lượng của một metric; mean / std / min / max qua các ảnh; lo95 / hi95 = CI 95% bootstrap của mean. "
+             f"`sd_path` = độ lệch chuẩn InsDel giữa {K} đường trong một ảnh.\n")
+    names2 = {"mean_path": "InsDel trung bình các đường", "sd_path": "sd giữa các đường (trong ảnh)",
+              "best_minus_mean": "tốt nhất − trung bình", "mean_minus_worst": "trung bình − kém nhất",
+              "spi": f"InsDel của SPI {K} đường", "spi_minus_mean": "SPI − trung bình", "best_minus_spi": "tốt nhất − SPI",
+              "frac_paths_above_spi": "tỷ lệ đường vượt SPI"}
+    L.append(md(long_stats(sp, ["metric"], list(names2), names2), ["metric", "đại lượng", "n_images"] + STAT))
 
     L.append("## 3. Đánh giá chéo: đường tốt nhất theo metric này, chấm theo metric kia\n")
     L.append("`best_gain` = InsDel(metric chấm) của đường tốt nhất theo metric chọn − trung bình các đường (metric chấm). `best_rank` = hạng "
              f"của nó theo metric chấm (1..{K}; ngẫu nhiên {(K + 1) / 2:g}). `worst_*` = tương tự cho đường kém nhất. `spi_gain` = SPI "
              "− trung bình (metric chấm), để so. Đường chéo = oracle.\n")
-    L.append("Ma trận `best_gain` (hàng = chọn theo, cột = chấm theo; * = CI 95% không chứa 0):\n")
+    L.append("Ma trận `best_gain`, ô = mean ± std qua các ảnh (hàng = chọn theo, cột = chấm theo; * = CI 95% của mean không chứa 0):\n")
     tab = []
     for a in bases:
         r = {"chọn theo \\ chấm theo": a}
@@ -587,28 +626,30 @@ def write_report(cfg: dict) -> str:
             if len(q):
                 q = q.iloc[0]
                 sig = "*" if (q.best_gain_lo95 > 0 or q.best_gain_hi95 < 0) else ""
-                r[b] = f"{q.best_gain:+.3f}{sig}"
+                r[b] = f"{q.best_gain:+.3f} ± {q.best_gain_std:.3f}{sig}"
         tab.append(r)
     sp_row = {"chọn theo \\ chấm theo": f"(SPI {K} đường)"}
     for b in bases:
         q = sp[sp.metric == b]
         if len(q):
-            sp_row[b] = f"{q.spi_minus_mean.iloc[0]:+.3f}"
+            sp_row[b] = f"{q.spi_minus_mean.iloc[0]:+.3f} ± {q.spi_minus_mean_std.iloc[0]:.3f}"
     tab.append(sp_row)
     L.append(md(pd.DataFrame(tab)))
-    L.append("Ma trận hạng trung bình `best_rank`:\n")
+    L.append(f"Ma trận hạng `best_rank` (1..{K}), ô = mean ± std qua các ảnh:\n")
     tab = []
     for a in bases:
         r = {"chọn theo \\ chấm theo": a}
         for b in bases:
             q = cs[(cs.select_on == a) & (cs.eval_on == b)]
             if len(q):
-                r[b] = f"{q.best_rank.iloc[0]:.1f}"
+                r[b] = f"{q.best_rank.iloc[0]:.1f} ± {q.best_rank_std.iloc[0]:.1f}"
         tab.append(r)
     L.append(md(pd.DataFrame(tab)))
-    L.append("Đầy đủ với CI:\n")
-    L.append(md(cs, [c for c in ("select_on", "eval_on", "n_images", "best_gain", "best_gain_lo95", "best_gain_hi95", "best_rank",
-                                 "worst_gain", "worst_gain_lo95", "worst_gain_hi95", "worst_rank", "spi_gain") if c in cs]))
+    L.append("Đầy đủ (mean / std / min / max qua các ảnh, CI 95% của mean):\n")
+    names3 = {"best_gain": "tốt nhất: ΔInsDel", "best_rank": "tốt nhất: hạng", "worst_gain": "kém nhất: ΔInsDel",
+              "worst_rank": "kém nhất: hạng"}
+    L.append(md(long_stats(cs, ["select_on", "eval_on"], list(names3), names3),
+                ["select_on", "eval_on", "đại lượng", "n_images"] + STAT))
 
     L.append(f"## 4. Tương quan hạng điểm của {K} đường giữa các metric\n")
     tab = []
@@ -620,18 +661,22 @@ def write_report(cfg: dict) -> str:
                 r[b] = f"{q.spearman.iloc[0]:.2f}"
         tab.append(r)
     L.append(md(pd.DataFrame(tab)))
-    L.append("Gần 0 nghĩa là thứ tự 'đường nào tốt hơn' của metric này không nói gì về metric kia.\n")
+    L.append("Gần 0 nghĩa là thứ tự 'đường nào tốt hơn' của metric này không nói gì về metric kia. Theo cặp, qua các ảnh:\n")
+    crp = cr[cr.a.map(bases.index) < cr.b.map(bases.index)]
+    L.append(md(long_stats(crp, ["a", "b"], ["spearman"]), ["a", "b", "n_images"] + STAT))
 
     L.append("## 5. Best-of-m (oracle, cùng metric)\n")
-    L.append(md(bom.pivot(index="metric", columns="m", values="gain").reset_index()))
+    L.append("Kỳ vọng InsDel của đường tốt nhất trong m đường rút ngẫu nhiên từ K, trừ trung bình các đường (m = 1 ≡ 0); qua các ảnh:\n")
+    L.append(md(long_stats(bom, ["metric", "m"], ["gain"]), ["metric", "m", "n_images"] + STAT))
     L.append("![best-of-m](pathscore/pathscore_bestofm.png)\n")
 
     if px is not None and len(px):
         L.append("## 6. Proxy chọn đường không tốn thêm forward\n")
         L.append("Hướng chọn đặt trước (loo_cos / loo_spearman / top_mass → lớn nhất; abs_resid_rel / l1_rel / d_hat → nhỏ nhất). "
-                 "`rho` = Spearman proxy–điểm trong một ảnh; `select_gain` = đường proxy chọn − trung bình; so với `spi_gain`.\n")
-        L.append(md(px, [c for c in ("metric", "proxy", "n_images", "rho", "rho_lo95", "rho_hi95", "select_gain", "select_gain_lo95",
-                                     "select_gain_hi95", "oracle_gain", "spi_gain") if c in px]))
+                 "`rho` = Spearman proxy–điểm trong một ảnh; `select_gain` = đường proxy chọn − trung bình. So với "
+                 "`tốt nhất − trung bình` và `SPI − trung bình` ở mục 2. Qua các ảnh:\n")
+        names6 = {"rho": "rho (proxy ~ InsDel)", "select_gain": "đường proxy chọn − trung bình"}
+        L.append(md(long_stats(px, ["metric", "proxy"], list(names6), names6), ["metric", "proxy", "đại lượng", "n_images"] + STAT))
 
     L.append("## 7. Ví dụ từng ảnh\n")
     L.append("![ví dụ](pathscore/pathscore_rank_examples.png)\n")

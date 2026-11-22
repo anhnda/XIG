@@ -94,6 +94,16 @@ def test_cross_independent_metrics():
     assert g.loc[1] == pytest.approx(0.0, abs=1e-12) and g.is_monotonic_increasing
 
 
+def test_summarize_mean_std_min_max_over_images():
+    df = pd.DataFrame({"k": ["a"] * 6, "image": ["i1", "i1", "i2", "i2", "i3", "i3"], "v": [1.0, 3.0, 4.0, 4.0, 7.0, 9.0]})
+    s = PS.summarize(df, ["k"], ["v"], 200, 0).iloc[0]          # theo ảnh (trung bình seed trước): 2, 4, 8
+    assert s.v == pytest.approx(14 / 3) and s.v_min == 2.0 and s.v_max == 8.0
+    assert s.v_std == pytest.approx(np.std([2.0, 4.0, 8.0], ddof=1)) and s.n_images == 3
+    lt = PS.long_stats(PS.summarize(df, ["k"], ["v"], 200, 0), ["k"], ["v"], {"v": "giá trị"})
+    assert list(lt.columns[:2]) == ["k", "đại lượng"] and lt.iloc[0]["đại lượng"] == "giá trị"
+    assert lt.iloc[0]["min"] == 2.0 and lt.iloc[0]["max"] == 8.0
+
+
 def test_figures_and_tables_on_synthetic(tmp_path):
     paths, spi, bases = _synthetic("independent", n_img=5, K=8, seed=1)
     st = PS.per_group_stats(paths, spi, bases)
