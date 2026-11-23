@@ -354,6 +354,19 @@ def _gidx(groups, n):
     return out
 
 
+def num_den(Yb: torch.Tensor, d: torch.Tensor, var_mean_raw: float, L_mu: float) -> dict:
+    """Tách L_D(μ) = E_D / C_D (sửa đổi 3): C_D = E_D[ΔF_S²] (mẫu số), E_D = E_D[(p_Sᵀμ − ΔF_S)²] (tử số, đã khử phương sai),
+    và độ lớn của dự đoán so với ΔF: rms_ratio = sqrt(E_D[(p_Sᵀμ)²] / C_D) (‖Pμ‖² ước lượng không chệch = ‖PȲ‖² − tr Var(PȲ)),
+    beta_opt = ⟨Pμ, ΔF⟩ / ‖Pμ‖² (hệ số co giãn tối ưu), cos_bar = cos(PȲ, ΔF) (từ ước lượng, hơi chệch về 0)."""
+    n = int(d.numel())
+    C_D = float((d * d).sum()) / n
+    pm2 = max(float((Yb * Yb).sum()) - float(var_mean_raw), 0.0)
+    dot = float((Yb * d).sum())
+    yn = float(Yb.norm())
+    return {"C_D": C_D, "E_D": L_mu * C_D, "rms_ratio": math.sqrt(pm2 / n / C_D) if C_D > 0 else NAN,
+            "beta_opt": dot / pm2 if pm2 > 0 else NAN, "cos_bar": dot / (yn * math.sqrt(n * C_D)) if yn > 0 and C_D > 0 else NAN}
+
+
 def pair_core(y1: torch.Tensor, y2: torch.Tensor, d: torch.Tensor, Ks, n_flip: int = 0, gen=None,
               jackknife: bool = False) -> dict:
     """T10 trên m cặp (y1 = P T(Z_j), y2 = P T(RZ_j)), (m, n) float64. Mọi phương sai chia cho Σ ΔF² của chính tập ô."""
@@ -373,6 +386,7 @@ def pair_core(y1: torch.Tensor, y2: torch.Tensor, d: torch.Tensor, Ks, n_flip: i
     out = {"m": m, "n_sets": int(d.numel()), "den": den, "Ve": Ve, "Vo": Vo, "Vpath": Ve + Vo, "L_Ebar": L_Eb, "L_mu": L_mu,
            "rho": 2 * Ve / (Ve + Vo) if Ve + Vo > 0 else NAN,
            "Ve_raw": Ve_raw, "Vo_raw": Vo_raw, "L_Ebar_raw": L_Eb * den}
+    out.update(num_den(Eb, d, Ve_raw / m, L_mu))
     for K in Ks:
         out[f"J_indep_{K}"] = L_mu + (Ve + Vo) / K
         out[f"J_rev_{K}"] = L_mu + 2 * Ve / K
@@ -423,6 +437,7 @@ def indep_core(Y: torch.Tensor, d: torch.Tensor, Ks, c2_sizes=(1, 2, 4, 8, 16)) 
     Lp = infid(Y, d)
     out = {"P": P, "den": den, "sigma2": s2, "L_mean": L_mean, "L_mu": L_mean - s2 / P, "mean_path_infid": float(Lp.mean()),
            "identity_gap": float(Lp.mean()) - (L_mean + s2 * (P - 1) / P), "var_share_at_P": (s2 / P) / L_mean if L_mean > 0 else NAN}
+    out.update(num_den(Yb, d, s2 * den / P, out["L_mu"]))
     for K in Ks:
         out[f"J_{K}"] = out["L_mu"] + s2 / K
     for K in c2_sizes:

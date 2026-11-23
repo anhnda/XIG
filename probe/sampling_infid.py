@@ -41,7 +41,7 @@ from .paths import straight_nodes
 from .quad import Counter
 
 F64 = torch.float64
-SI_VERSION = 1
+SI_VERSION = 2          # 2: pair_core có C_D, E_D, rms_ratio, beta_opt (sửa đổi 3)
 STAGES = ("pilot", "e1a", "e1b-dev", "e1b-test", "e2")
 PROTO_DEFAULT = {"rule": "mid", "M": 1, "K_main": None, "Ks": [1, 2, 4, 8, 16], "delta0": None, "delta1": None, "delta2": None,
                  "delta3": None, "rho_min_vindep": 1.0e-4, "alpha": 0.05, "bootstrap": 10000, "seed": 23, "n_flip": 2000,
@@ -777,7 +777,7 @@ def write_report(cfg: dict) -> str:
             kv = [c for c in mg.columns if c.startswith("KV_") and not c.endswith("ngroups")]
             if kv:
                 L.append("**C2 — K·V(K) từ nhóm rời nhau của nhánh indep** (ổn định theo K trong sai số; khớp 1/K không chứng minh C1):\n")
-                L.append(md(mg.groupby("config")[kv + ["sigma2"]].mean().reset_index()))
+                L.append(md(mg.groupby(["config", "dset"])[kv + ["sigma2"]].mean().reset_index()))
         if "signflip_p" in ev:
             from statistics import NormalDist
             nd = NormalDist()
@@ -804,6 +804,12 @@ def write_report(cfg: dict) -> str:
         L.append("Trung bình theo ảnh. Hai estimand KHÁC NHAU của ρ: `rho_mean_img` = TB các ρ̂_i theo ảnh; `rho_ratio_of_means` = "
                  "2·TB(V̂_e)/TB(V̂_e + V̂_o) (khớp với các cột V_e, V_o bên cạnh). Chỉ ảnh có V̂_indep > ngưỡng.\n")
         L.append(md(sm))
+        try:
+            ref_p = cname(stage_cfg(cfg, "pilot")["configs"][0])
+        except SystemExit:
+            ref_p = None
+        if ref_p and pp.config.nunique() > 1:
+            L.append(paired_alpha_report(cfg, pp, ref_p, "eval", ci, "### Pilot — so sánh α theo cặp ảnh (RQ2, exploratory)", D["primary"]))
         L.append(coupled_table(cfg, _r(out, "pilot", "coupled"), ci, decide=False, title="### Pilot — thiết kế ghép (ước lượng phương sai "
                                                                                         "hiệu ứng cho power, KHÔNG dùng để chọn δ₂)"))
 
@@ -886,6 +892,10 @@ def write_report(cfg: dict) -> str:
                  "quadrature) quyết định ngân sách thực tế; ở α nhỏ có thể có đuôi nặng — xem q90 và CI. Câu hỏi quyết định: α nhỏ giảm "
                  "L_D(μ_q) hay chỉ giảm phương sai đường đơn — chỉ cột L̂_D(μ_q) trả lời.\n")
         L.append(md(tab.sort_values("L_mu")))
+        b_ = C._merge(STAGE_DEFAULT["e1b"], icfg(cfg).get("e1b", {}) or {})
+        L.append(paired_alpha_report(cfg, dp, cname(b_["baseline"]), "eval", ci,
+                                     "### E1b dev — so sánh theo cặp ảnh với SPI baseline, từng D (bộ ô ĐÁNH GIÁ; chọn cấu hình dùng bộ ô CHỌN)",
+                                     D["primary"]))
         if os.path.exists(selection_path(cfg)):
             sel = json.load(open(selection_path(cfg)))
             L.append(f"Đã chọn (khoá): **{sel['chosen_name']}** ({sel['time']}).\n")
@@ -916,6 +926,66 @@ def rho_two(ev, thr: float):
                     "rho_ratio_of_means": float(2 * g.Ve.mean() / g.Vpath.mean()) if len(g) and g.Vpath.mean() > 0 else np.nan,
                     "n_img_rho": len(g)})
     return pd.DataFrame(out, columns=["config", "dset", "rho_mean_img", "rho_ratio_of_means", "n_img_rho"])
+
+
+def _loo(v: np.ndarray) -> np.ndarray:
+    n = len(v)
+    return (v.sum() - v) / (n - 1) if n > 1 else np.array([np.nan])
+
+
+def paired_alpha_report(cfg: dict, p, ref: str, set_name: str, ci, title: str, primary: str) -> str:
+    """So sánh THEO CẶP ẢNH giữa các cấu hình và cấu hình tham chiếu `ref`, cho từng D (sửa đổi 3):
+    d_i = L_D,i(μ_c) − L_D,i(μ_ref), r_i = log(L_D,i(μ_c) / L_D,i(μ_ref)); TB [CI], trung vị, số ảnh cải thiện (d_i < 0),
+    leave-one-out (min / max của TB khi bỏ từng ảnh, dấu có ổn định không, ảnh có |d| lớn nhất). Kèm E_D, C_D, độ lớn dự đoán."""
+    import pandas as pd
+    from .report import md
+    if p is None or not len(p):
+        return ""
+    q = p[(p.set == set_name) & (p.group == "all")]
+    if ref not in set(q.config):
+        return f"{title}\n\n_(không có cấu hình tham chiếu {ref})_\n"
+    out = [f"{title}\n", f"Tham chiếu `{ref}`; bộ ô `{set_name}`; L = L̂_D(μ_q) = L(Ē) − V̂_e/m (đã khử phương sai lấy mẫu). D chính "
+           f"`{primary}`, các D khác là phụ / thăm dò. Pilot / dev là EXPLORATORY — không dùng CI này để khẳng định H3.\n"]
+    rows, ndr, trade = [], [], {}
+    for dn in [primary] + sorted(x for x in q.dset.unique() if x != primary):
+        qd = q[q.dset == dn]
+        if not len(qd):
+            continue
+        r0 = qd[qd.config == ref].set_index("image")
+        for c, g in qd.groupby("config", sort=False):
+            g = g.set_index("image")
+            nd = {"D": dn, "config": c, "n ảnh": len(g), "L (TB) [CI]": _ci_str(ci(g.L_mu)), "L trung vị": float(g.L_mu.median())}
+            for k in ("E_D", "C_D", "rms_ratio", "beta_opt", "cos_bar"):
+                if k in g:
+                    nd[f"{k} (trung vị)"] = float(g[k].median())
+            ndr.append(nd)
+            if c == ref:
+                continue
+            j = pd.concat([g.L_mu.rename("c"), r0.L_mu.rename("r")], axis=1).dropna()
+            if len(j) < 2:
+                continue
+            dv = (j.c - j.r).values
+            nclip = int(((j.c <= 0) | (j.r <= 0)).sum())
+            lr = np.log(j.c.clip(lower=1e-6).values / j.r.clip(lower=1e-6).values)
+            loo_d, loo_r = _loo(dv), _loo(lr)
+            imax = int(np.argmax(np.abs(dv)))
+            stable = bool((loo_d < 0).all() or (loo_d > 0).all())
+            rows.append({"D": dn, "config": c, "n ảnh": len(j), "TB d [CI]": _ci_str(ci(dv)), "trung vị d": float(np.median(dv)),
+                         "ảnh cải thiện (d<0)": f"{int((dv < 0).sum())}/{len(dv)}", "LOO TB d [min, max]": f"[{loo_d.min():.3g}, {loo_d.max():.3g}]",
+                         "dấu ổn định khi bỏ 1 ảnh": stable, "ảnh |d| lớn nhất": f"{j.index[imax]} ({dv[imax]:+.3g})",
+                         "TB log-tỷ số [CI]": _ci_str(ci(lr)), "trung vị log-tỷ số": float(np.median(lr)),
+                         "LOO log-tỷ số [min, max]": f"[{loo_r.min():.3g}, {loo_r.max():.3g}]", "L ≤ 0 bị kẹp": nclip})
+            m_, lo, hi = ci(lr)
+            trade.setdefault(c, {})[dn] = (f"{m_:+.2f} [{lo:+.2f}, {hi:+.2f}]" if np.isfinite(lo) else f"{m_:+.2f}")
+    out.append("**Chênh lệch theo cặp ảnh** (d < 0 / log-tỷ số < 0 ⇒ cấu hình tốt hơn tham chiếu):\n")
+    out.append(md(pd.DataFrame(rows)))
+    if trade:
+        out.append("**Đánh đổi giữa các D** — TB log(L_c / L_ref) theo ảnh [CI] (âm = tốt hơn tham chiếu). Cải thiện ở D chính đi kèm "
+                   "xấu đi ở D khác ⇒ cấu hình DỊCH attribution theo D chứ không tốt hơn nói chung:\n")
+        out.append(md(pd.DataFrame([{"config": c, **v} for c, v in trade.items()])))
+    out.append("**L_D(μ_q), tử số E_D, mẫu số C_D, độ lớn dự đoán** theo D × cấu hình (C_D giống nhau giữa cấu hình vì cùng ô):\n")
+    out.append(md(pd.DataFrame(ndr)))
+    return "\n".join(out)
 
 
 def coupled_table(cfg: dict, cpd, ci, decide: bool, title: str) -> str:

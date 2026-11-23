@@ -7,6 +7,8 @@ Sửa đổi protocol 1 (sau E0 + E-quadrature): `docs/PROTOCOL_AMENDMENT_1.md` 
 IG không chệch, chẩn đoán làm mượt khối, K chính = 4.
 Sửa đổi protocol 2 (sau pilot): `docs/PROTOCOL_AMENDMENT_2.md` — δ₁ = 0,75, δ₃ = 2,4 (so với SPI baseline; IG là đối chứng riêng),
 E1a 32 ảnh × m = 16, E1b vòng 1 α ∈ {0,1; 0,3; 1; 10}, E0 thêm độ nhạy theo D và chẩn đoán triệt tiêu, `nbr` giới hạn ở pilot.
+Sửa đổi protocol 3: `docs/PROTOCOL_AMENDMENT_3.md` — RQ2 trước, H2 hoãn; so sánh α theo cặp ảnh (leave-one-out), bảng theo từng D
+và đánh đổi xoá / chèn, tách L = E_D / C_D.
 
 ## Chạy
 

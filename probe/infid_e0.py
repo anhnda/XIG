@@ -40,7 +40,7 @@ from . import sampling as SM
 from .pathbank import settings
 
 F64 = torch.float64
-E0_VERSION = 1
+E0_VERSION = 2          # 2: thêm C_D, E_D, rms_ratio, beta_opt (sửa đổi 3)
 E0_DEFAULT = {"n_fit": 1536, "n_eval": 512, "grids": [14, 28], "lams": [0.0, 1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1], "folds": 4,
               "subsets_per_K": 200, "K_g0": 16, "allow_stale_attr": False, "smooth": [8, 16, 32], "extra_sets": []}
 
@@ -200,8 +200,9 @@ def e0_image(ctx, cfg: dict, pc: dict, idx: int, cdir: str, attr: dict, scores: 
     one = [IC.coef_stats(a.reshape(R * K, E.H, E.W)[i], E.D) for i in range(R * K)]
     row.update({f"pix_path_{k}": float(np.mean([o[k] for o in one])) for k in one[0]})
     # độ nhạy theo D: cùng attribution, D khác (forward cho ΔF_S, không gradient)
+    ND = ("C_D", "E_D", "rms_ratio", "beta_opt", "cos_bar")
     dsr = [{"image": E.image, "dset": name, "L_mu": ev["L_mu"], "sigma2": ev["sigma2"], "L_spi": row["ev_spi_infid_seed"],
-            "infid_beta_spi": row["ev_infid_beta_spi"], f"J_{Kg}": ev.get(f"J_{Kg}"), "den": ev["den"],
+            "infid_beta_spi": row["ev_infid_beta_spi"], f"J_{Kg}": ev.get(f"J_{Kg}"), "den": ev["den"], **{k: ev[k] for k in ND},
             **{f"G{G}_L_comp_oos": row.get(f"G{G}_L_comp_oos") for G in ec["grids"]},
             **{f"G{G}_L_free_oos": row.get(f"G{G}_L_free_oos") for G in ec["grids"]}}]
     Dsets = icfg(E.ctx.cfg)["D"]["sets"]
@@ -216,7 +217,8 @@ def e0_image(ctx, cfg: dict, pc: dict, idx: int, cdir: str, attr: dict, scores: 
         sx = IC.indep_core(Yx, dx_, Ks, c2_sizes=())
         r_ = {"image": E.image, "dset": nmx, "L_mu": sx["L_mu"], "sigma2": sx["sigma2"],
               "L_spi": float(np.mean([float(IC.infid(Yx.view(R, K, -1)[r].mean(0, keepdim=True), dx_)[0]) for r in range(R)])),
-              "infid_beta_spi": float(IC.infid_beta(Yx.mean(0, keepdim=True), dx_)[0]), f"J_{Kg}": sx.get(f"J_{Kg}"), "den": sx["den"]}
+              "infid_beta_spi": float(IC.infid_beta(Yx.mean(0, keepdim=True), dx_)[0]), f"J_{Kg}": sx.get(f"J_{Kg}"), "den": sx["den"],
+              **{k: sx[k] for k in ND}}
         for G in ec["grids"]:
             flx = IC.floor_fit(IC.patch_design(E, dfx, int(G)), dfx.dF.to(dev), IC.patch_design(E, dex, int(G)), dx_, E.D,
                                [float(x) for x in ec["lams"]], int(ec["folds"]), E.cgen("infid-e0-cv", E.image, G, nmx))
@@ -447,6 +449,30 @@ def write_report(cfg: dict) -> str:
                     r[f"L*_free patch {G}"] = float(g[f"G{G}_L_free_oos"].mean())
             tab.append(r)
         L.append(md(pd.DataFrame(tab)))
+        if "C_D" in dsd:
+            L.append("**Tử số và mẫu số** (sửa đổi 3): L_D(μ) = E_D / C_D với C_D = E_D[ΔF_S²], E_D = E_D[(p_Sᵀμ − ΔF_S)²] (đã khử phương "
+                     "sai). rms_ratio = sqrt(E_D[(p_Sᵀμ)²] / C_D) = độ lớn dự đoán / độ lớn ΔF; beta_opt = hệ số co giãn tối ưu "
+                     "(< 1 ⇒ dự đoán quá tay); cos_bar = cos(PĀ, ΔF). Trung vị theo ảnh (ảnh cực trị chi phối trung bình):\n")
+            t2 = dsd.groupby("dset", sort=False).agg(C_D_med=("C_D", "median"), E_D_med=("E_D", "median"), L_mu_med=("L_mu", "median"),
+                                                     rms_ratio_med=("rms_ratio", "median"), beta_opt_med=("beta_opt", "median"),
+                                                     cos_bar_med=("cos_bar", "median")).reset_index()
+            L.append(md(t2))
+            base_ = dsd[dsd.dset == name].set_index("image")
+            t3 = []
+            for dn, g in dsd[dsd.dset != name].groupby("dset", sort=False):
+                g = g.set_index("image")
+                lc = np.log(base_.C_D.reindex(g.index).values / g.C_D.values)
+                le = np.log(base_.E_D.reindex(g.index).clip(lower=1e-12).values / g.E_D.clip(lower=1e-12).values)
+                t3.append({"D": dn, f"log(C_D {name} / C_D D)": _fmt_ci(ST.boot_ci(lc, B, seed, al)),
+                           f"log(E_D {name} / E_D D)": _fmt_ci(ST.boot_ci(le, B, seed, al))})
+            L.append("Phân rã log-tỷ số của L giữa D chính và D khác: log(L_del/L_D) = log(E_del/E_D) − log(C_del/C_D). "
+                     "log C âm và lớn ⇒ D xoá có infid chuẩn hoá lớn chủ yếu vì ΔF_S nhỏ; log E dương ⇒ tử số thực sự lớn hơn:\n")
+            L.append(md(pd.DataFrame(t3)))
+            L.append("<details><summary>Theo từng ảnh × D</summary>\n")
+            L.append(md(dsd[["image", "dset", "L_mu", "E_D", "C_D", "rms_ratio", "beta_opt", "cos_bar"]].sort_values(["image", "dset"])))
+            L.append("</details>\n")
+            L.append("Giả thuyết bão hoà gần ảnh đầy đủ là giả thuyết CƠ CHẾ; các bảng này chỉ cho biết phần nào của L đến từ mẫu số, "
+                     "phần nào từ tử số và độ lớn dự đoán — không phải bằng chứng nhân quả.\n")
         prim = dsd[dsd.dset == name].set_index("image").L_mu
         tab = []
         for dn, g in dsd[dsd.dset != name].groupby("dset", sort=False):
