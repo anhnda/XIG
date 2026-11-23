@@ -327,9 +327,25 @@ pathscore:
   seeds: 2                   # số bộ K đường độc lập mỗi ảnh
   K: 16                      # số đường SPI mỗi bộ
   mask_bases: [blur, black, white, grey, mean]    # nền mask InsDel; mean = màu trung bình theo kênh của chính ảnh
-  top_frac: 0.05             # proxy top_mass
+  top_frac: 0.05             # proxy top_mass; cũng là k của metric prec_top
   budget_minutes: 30
   enforce_budget: true
+  # Metric bổ sung bên cạnh InsDel (probe/pathscore_metrics.py). Sửa mục này chỉ tính lại scores.pt (forward), KHÔNG tính lại
+  # bản đồ attr.pt (gradient). Bỏ hẳn mục này = dùng mặc định như dưới.
+  extra_metrics:
+    loc: true                # iou, mass_in_mask, energy_mask, pointing, prec_top, auroc_mask, ap_mask (theo mask GT, không forward)
+    pointing_tol: 15         # px; pointing game: argmax trong mask nới 15 px (Zhang et al. 2018)
+    road:                    # ROAD (Rong et al. 2022): noisy linear imputation, MoRF / LeRF, xác suất lớp đích
+      enabled: true
+      fracs: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+      noise: 0.01            # độ lệch chuẩn nhiễu thêm vào pixel được điền (đơn vị pixel [0,1])
+      iters: 1000            # PCG tối đa / lô
+      tol: 1.0e-5            # dừng khi ‖r‖ / ‖b‖ < tol
+    subset:                  # sensitivity-n (Ancona et al. 2018) + infidelity chuẩn hoá (Yeh et al. 2019): xoá ô vuông về baseline đen
+      enabled: true
+      n: 96                  # số ô vuông mỗi ảnh (dùng chung cho mọi đường)
+      sizes: [16, 32, 56]    # cạnh ô (px), luân phiên
+  report_extra: null         # null = mọi metric bổ sung có trong CSV; hoặc danh sách con, ví dụ [iou, pointing, road, infid]
 
 debug:
   sampling: {n_images: 2, seeds: 2, K: [2, 4], insdel_steps: 10,
@@ -339,7 +355,8 @@ debug:
              quad_check: {n_images: 1, M: [1, 2, 4]},
              lime: {n_samples: 32}, locality: {n_null: 2}, stats: {bootstrap: 200, min_images: 2},
              budget: {enforce: false, secondary_minutes: 1000}}
-  pathscore: {n_images: 2, seeds: 1, K: 4, enforce_budget: false}
+  pathscore: {n_images: 2, seeds: 1, K: 4, enforce_budget: false,
+              extra_metrics: {road: {fracs: [0.2, 0.5, 0.8], iters: 200}, subset: {n: 12}}}
   e12: {split: pilot, n_images: 1, N: 8, M: 2, K: 4, levels: {dp: [1, 10]}, gate: {n_images: 1, K: 2, M: [2, 4], M_hi: 4},
         insdel_steps: 10}
   e11: {n_images: 1, N: 8, K: 2, paths: [ig, "dp:10", smooth, "rgb:10"], calib: {d: 2000}, mu_iter: 50, insdel_steps: 10}

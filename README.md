@@ -47,6 +47,16 @@ bash scripts/run.sh pathscore-report   # dựng lại báo cáo từ CSV
 
 Cấu hình ở mục `pathscore:` (hash riêng; tách khỏi P4). Module: `probe/pathscore.py`; test: `tests/test_pathscore.py`.
 
+Metric bổ sung bên cạnh InsDel (`pathscore.extra_metrics`, cài trong `probe/pathscore_metrics.py`), tính cho từng đường và cho SPI:
+- định vị theo mask GT (không tốn forward): `iou`, `mass_in_mask`, `energy_mask`, `pointing` (nới 15 px), `prec_top`, `auroc_mask`, `ap_mask`;
+- faithfulness: `road` / `road_morf` / `road_lerf` (ROAD, nội suy tuyến tính có nhiễu, giải bằng PCG), `sens_n` (sensitivity-n),
+  `infid` (infidelity chuẩn hoá, nhiễu = xoá ô vuông về baseline đen).
+
+Metric "nhỏ = tốt" (`road_morf`, `infid`) được đổi dấu trong mọi phân tích chéo; metric khác đơn vị được so bằng đơn vị z
+(chia cho sd giữa các đường trong ảnh). Đổi `extra_metrics` chỉ tính lại `scores.pt` (forward), bản đồ `attr.pt` giữ nguyên;
+`pathscore.report_extra` chọn metric đưa vào báo cáo mà không đụng cache. Sau khi cập nhật code này phải chạy lại
+`bash scripts/run.sh pathscore` (scores cũ không có metric mới nên tự bị tính lại), rồi mới `pathscore-report`.
+
 ## Cấu trúc
 
 | file | nội dung |
