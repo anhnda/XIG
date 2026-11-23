@@ -25,6 +25,10 @@ class Ctx:
         self.ds = ImageNetSeg(cfg["local"]["imagenet_mat"], cfg["data"]["size"])
         self.sp = splits(cfg, self.ds.n_total)
         self.bb = load_backbone(cfg, self.dev)
+        # chế độ xác định (C3): cùng đầu vào ⇒ cùng gradient. Đặt ở local: (không thuộc hash) để không làm mất cache cũ.
+        self.deterministic = bool((cfg.get("local", {}) or {}).get("deterministic", True))
+        torch.backends.cudnn.deterministic = self.deterministic
+        torch.backends.cudnn.benchmark = False
         self.batch = int(cfg["model"]["batch"])
         self.seed = int(cfg["seed"])
 

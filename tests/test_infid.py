@@ -264,3 +264,74 @@ def test_toy_oracles_fast_subset():
     assert r["rho"][0] < 1e-8
     det = TS.oracle_deterministic()
     assert all(x["pass"] for x in det), [x for x in det if not x["pass"]]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# C3a / C3b — quy tắc `rand`
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_C3a_rand_unbiased_conditional_on_path():
+    """Cố định đường Z; trung bình theo U của `rand` (aw_stream thật) → tích phân chính xác trên polyline, F phi tuyến."""
+    d, N = 3, 5
+    w = torch.tensor([1.5, -2.0, 1.0], dtype=F64)
+    fn = lambda X: torch.sigmoid(X.flatten(1) @ w * 2.0) * (1 + X.flatten(1)[:, 0])
+    Z = SM.spi_schedule(3.0, N, (d, 1, 1), gen(11))
+    ex = integrate(fn, Z, 12, "gl", batch=256).flatten()
+    R = 1500
+    draws = torch.stack([integrate(fn, Z, 1, "rand", gen=gen(1000 + s), batch=256).flatten() for s in range(R)])
+    se = draws.std(0) / math.sqrt(R)
+    assert torch.all((draws.mean(0) - ex).abs() < 4.5 * se + 1e-12), (draws.mean(0), ex, se)
+    assert float(draws.std(0).max()) > 1e-4                                   # có nhiễu thật (không suy biến)
+
+
+class _FakeCtx:
+    batch = 64
+    seed = 1
+
+
+class _FakeE:
+    """Env tối thiểu cho sampling_infid.pair_block: ghi lại mọi khoá generator."""
+
+    def __init__(self):
+        self.ctx, self.image, self.shape, self.H, self.W, self.D = _FakeCtx(), "img", (1, 4, 4), 4, 4, 1.0
+        self.x = torch.rand(1, 1, 4, 4, dtype=F64, generator=torch.Generator().manual_seed(0)) + 0.5
+        self.x0 = torch.zeros_like(self.x)
+        self.dx = self.x - self.x0
+        a = torch.randn(16, dtype=F64, generator=torch.Generator().manual_seed(1))
+        self.fn = lambda X: torch.sigmoid(X.flatten(1) @ a)
+        self.keys = []
+
+    def gen(self, *parts):
+        self.keys.append(parts)
+        return C.generator(C.seed_of(1, *parts), "cpu")
+
+    def cgen(self, *parts):
+        return torch.Generator().manual_seed(C.seed_of(1, *parts))
+
+
+def test_C3b_pair_quadrature_streams_independent():
+    """Mỗi thành viên (Z, RZ) của mỗi cặp rút U từ một khoá RIÊNG; không khoá nào lặp lại; đường đảo không rút số gia mới."""
+    from probe import sampling_infid as SI
+    E = _FakeE()
+    boxes = IC.square_boxes(4, 4, 6, [1, 2], torch.Generator().manual_seed(3))
+    part = IC.Part("deletion", "black", torch.ones(6, dtype=F64), boxes[:, 2], boxes=boxes, dF=torch.randn(6, dtype=F64))
+    dsets = {"d": {"eval": IC.DSet("d", [part])}}
+    pr = {"rule": "rand", "M": 1, "quad_probe": 0, "quad_probe_factor": 4}
+    m = 3
+    res = SI.pair_block(E, {"family": "spi", "alpha": 10, "N": 4}, m, pr, dsets, "t")
+    qk = [k for k in E.keys if k[0] == "INFq"]
+    sk = [k for k in E.keys if k[0] == "INFspi"]
+    assert len(qk) == 2 * m and len(set(qk)) == 2 * m
+    assert {k[-1] for k in qk} == {0, 1}                                      # w = 0 (Z) và w = 1 (RZ) tách khoá
+    assert len(sk) == m and len(set(sk)) == m
+    y1, y2 = res["Y"][("d", "eval")]
+    assert y1.shape == y2.shape == (m, 6) and not torch.allclose(y1, y2)
+
+
+def test_C3b_rand_noise_cancels_in_VoVe_toy():
+    """f bậc 2: chính xác ⇒ V_e = 0, V_o = 1/24; với rand (U độc lập trong cặp) V_o − V_e vẫn = 1/24, V_e = τ²/2 > 0."""
+    g = gen(21)
+    h = TS.quad_from_terms(2, cross={(0, 1): 1.0}, sq={0: 10.0})
+    r = TS.pair_mc(h, 2, 2.0, 2, "rand", TS._P(2, [(0,)]), torch.ones(1, dtype=F64), 8, 20000, g)
+    assert abs(r["VoVe"][0] - 1 / 24) < 4 * r["VoVe"][1] + 2e-3
+    assert r["Ve"][0] > 10 * r["Ve"][1]

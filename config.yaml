@@ -69,11 +69,15 @@ pathscore:
 # Sau infid-lock KHÔNG sửa protocol / D / e1a / e1b / e2 (các bước sau khoá kiểm hash và dừng nếu khác).
 infid:
   protocol:
-    rule: mid                # quy tắc tích phân cho thí nghiệm mới (rand = mặc định cũ của P4/PATHSCORE; left = cờ tương thích)
-    M: 1                     # điểm gradient MỖI ĐOẠN; khoá sau quad-check
-    K_main: null             # K của endpoint chính (chọn từ pilot, trước khi mở tập test)
+    # Sửa đổi protocol 1 (docs/PROTOCOL_AMENDMENT_1.md): rand M = 1, khoá TẠM cho E1a pilot; khoá chính thức bằng infid-lock
+    # sau khi C3a/C3b đạt (bash scripts/run.sh test + toy) và pilot cho sd của ΔV_D.
+    rule: rand               # không chệch có điều kiện theo đường; nhiễu cộng τ²/2 vào V_e và V_o ⇒ ΔV_D không đổi (C3b)
+    M: 1                     # điểm gradient MỖI ĐOẠN
+    quad_policy: unbiased_with_variance_diagnostic   # tol của quad-check chỉ là chẩn đoán, không phải điều kiện dừng
+    K_main: 4                # endpoint chính H1: ΔV_D(4)
+    K_secondary: [2, 8, 16]  # báo cáo phụ (không đạt/trượt)
     Ks: [1, 2, 4, 8, 16]
-    delta0: null             # G0 — cổng phân bổ tài nguyên (một chiều, không dừng nghiên cứu)
+    delta0: 1.0              # G0 — cổng phân bổ tài nguyên (một chiều, không dừng nghiên cứu)
     delta1: null             # H1: ΔV_D(K_main) ≥ δ₁
     delta2: null             # H2: V_rev − V_nbr ≥ δ₂
     delta3: null             # H3: giảm L_D(μ) so với SPI baseline và IG ≥ δ₃
@@ -115,9 +119,10 @@ infid:
     coverage: {d: 16, N: 8, alpha: 10, n_pool: 64, truth_nb: 16, truth_b: 8192, n_images: [8, 16], m: [8, 32], reps: 200,
                bootstrap: 2000}
   e0: {n_fit: 1536, n_eval: 512, grids: [14, 28], lams: [0.0, 1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1], folds: 4, subsets_per_K: 200,
-       K_g0: 16, allow_stale_attr: false}
+       K_g0: 16, allow_stale_attr: false, smooth: [8, 16, 32]}    # smooth: chẩn đoán làm mượt khối h px (bảo toàn tổng)
   quad: {split: pilot, offset: 0, n_images: 4, paths_per_alpha: 2, alphas: [1, 10, 100], N: 64, ig: true, ig_N: 64,
-         L_max: 4, tol_ref: 1.0e-3, tol: 1.0e-2, rand_M: [1], n_sets: 256}
+         L_max: 4, tol_ref: 1.0e-3, tol: 1.0e-2, rand_M: [1], n_sets: 256,
+         rand_repeats: 8, repeat_check: true}     # C3c: τ²_D từ 8 lần rút U / đường; kiểm lặp lại xác định (cache riêng)
   pilot:
     split: pilot
     offset: 0
@@ -126,9 +131,9 @@ infid:
     m_indep: 32              # nhánh indep nhỏ (đối chiếu phương sai suy từ cặp)
     configs: [{family: spi, alpha: 10, N: 64}]
   e1a:
-    split: pilot
-    offset: 0
-    n_images: 16             # cỡ mẫu tính lại từ sd của ΔV_D ở pilot (báo cáo pilot)
+    split: fresh             # ảnh mới, không giao ảnh pilot dùng để chọn K_main / δ
+    offset: 600
+    n_images: 48             # mục tiêu ban đầu; chốt lại từ sd của ΔV_D ở pilot (báo cáo pilot) trước infid-lock
     m: 32
     configs: [{family: spi, alpha: 10, N: 64}, {family: spi, alpha: 1, N: 64}, {family: spi, alpha: 100, N: 64}]
     coupled: {enabled: false, designs: [global, nbr], Ks: [2, 4, 8, 16], replicates: 8}   # bật sau khi C1 đạt
@@ -139,6 +144,7 @@ infid:
     grid: {family: [spi, patch], alpha: [1, 3, 10, 30, 100, 1000], N: [64], G: [7], eta: [0.5]}
     baseline: {family: spi, alpha: 10, N: 64}
     ig_N: 64
+    ig_repeats: 8            # IG với rand: L̂(μ_IG) = L(Ā) − σ̂²_IG / r; J_IG(K) = đối chứng cùng ngân sách
     select_set: sel
   e2:
     split: fresh
@@ -168,13 +174,14 @@ debug:
           large: {d: 32, graphs: [dense_mixed, hub], S_sizes: [4], N: [4, 16], alphas: [1, 10], reps: 1, nb: 3, b: 128,
                   cov_triples: 20},
           coverage: {n_pool: 8, truth_nb: 2, truth_b: 1024, n_images: [4], m: [8], reps: 10, bootstrap: 200}}
-    e0: {n_fit: 128, n_eval: 64, grids: [14], lams: [0.0, 1.0e-2], folds: 2, subsets_per_K: 10}
-    quad: {n_images: 1, paths_per_alpha: 1, alphas: [10], N: 8, ig_N: 8, L_max: 2, n_sets: 32}
+    e0: {n_fit: 128, n_eval: 64, grids: [14], lams: [0.0, 1.0e-2], folds: 2, subsets_per_K: 10, smooth: [16]}
+    quad: {n_images: 1, paths_per_alpha: 1, alphas: [10], N: 8, ig_N: 8, L_max: 2, n_sets: 32, rand_repeats: 2}
     pilot: {n_images: 2, m: 3, m_indep: 4, configs: [{family: spi, alpha: 10, N: 8}]}
-    e1a: {n_images: 2, m: 3, configs: [{family: spi, alpha: 10, N: 8}],
+    e1a: {split: pilot, offset: 0, n_images: 2, m: 3, configs: [{family: spi, alpha: 10, N: 8}],
           coupled: {enabled: true, designs: [nbr], Ks: [2], replicates: 2}}
     e1b: {dev: {n_images: 2}, test: {split: pilot, offset: 4, n_images: 2}, m: 2,
-          grid: {family: [spi, patch], alpha: [1, 10], N: [8], G: [7]}, baseline: {family: spi, alpha: 10, N: 8}, ig_N: 8}
+          grid: {family: [spi, patch], alpha: [1, 10], N: [8], G: [7]}, baseline: {family: spi, alpha: 10, N: 8}, ig_N: 8,
+          ig_repeats: 2}
     e2: {split: pilot, offset: 8, n_images: 1, m: 2, sets: [del_sq, ins_sq, frac50, del_sq_blur, del_sp], insdel_steps: 10,
          road: {fracs: [0.2, 0.8], iters: 200}}
 
@@ -182,5 +189,6 @@ debug:
 local:
   out: runs_probe
   imagenet_mat: gtsegs_ijcv.mat
+  deterministic: true        # cudnn.deterministic (C3); ở local: để không đổi hash cache
   exclude_index_files: [runs/seg200.json, runs/imagenet/index.json]   # ảnh đã dùng ở các đợt trước
   device: cuda

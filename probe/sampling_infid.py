@@ -152,7 +152,7 @@ STAGE_DEFAULT = {
             "ig": False, "coupled": {"enabled": False, "designs": ["global", "nbr"], "Ks": [2, 4, 8, 16], "replicates": 8}},
     "e1b": {"dev": {"split": "pilot", "offset": 0, "n_images": 16}, "test": {"split": "fresh", "offset": 400, "n_images": 48},
             "m": 16, "grid": {"family": ["spi", "patch"], "alpha": [1, 3, 10, 30, 100, 1000], "N": [64], "G": [7], "eta": [0.5]},
-            "baseline": {"family": "spi", "alpha": 10, "N": 64}, "ig_N": 64, "sets": None, "select_set": "sel"},
+            "baseline": {"family": "spi", "alpha": 10, "N": 64}, "ig_N": 64, "ig_repeats": 8, "sets": None, "select_set": "sel"},
     "e2": {"split": "fresh", "offset": 500, "n_images": 32, "m": 16, "sets": None, "external": True, "floors": True,
            "extra_arch": [], "road": {"fracs": [0.1, 0.3, 0.5, 0.7, 0.9], "noise": 0.01, "iters": 1000, "tol": 1.0e-5},
            "insdel_steps": 50, "pointing_tol": 15, "top_frac": 0.05},
@@ -185,6 +185,7 @@ def stage_cfg(cfg: dict, stage: str) -> dict:
         sc["configs"] = [ch] + ([norm_conf(b["baseline"])] if cname(ch) != cname(b["baseline"]) else [])
         sc["ig"] = True
         sc["ig_N"] = int(b["ig_N"])
+        sc["ig_repeats"] = int(b.get("ig_repeats", 8))
     sc["configs"] = [norm_conf(c) for c in sc["configs"]]
     return sc
 
@@ -471,25 +472,44 @@ def process_image(ctx, cfg: dict, stage: str, sc: dict, idx: int, out: str) -> d
             rr = {k: [] for k in rows}
             base = {"stage": stage, "arch": arch, "image": image, "rule": pr["rule"], "M": int(pr["M"])}
             if sc.get("ig"):
+                # IG không chệch: với `rand`, r lần rút U độc lập trên CÙNG đường thẳng ⇒ L̂(μ_IG) = L(Ā) − σ̂²_IG / r
+                # (σ̂² = phương sai quadrature chiếu, ddof 1). Quy tắc tất định: r = 1, σ̂² = 0.
+                # J_IG(K) = L̂ + σ̂²/K = infid kỳ vọng của IG trung bình K lần rút — cùng ngân sách K·ig_N·M với SPI K đường khi ig_N = N.
                 N = int(sc.get("ig_N", 64))
+                r_ig = max(2, int(sc.get("ig_repeats", 8))) if pr["rule"] == "rand" else 1
                 n0, t0 = Counter.n, time.time()
-                Aig = attr_of(E, straight_nodes(E.x, E.x0, N), pr, (stage, "ig", image))
+                Xig = straight_nodes(E.x, E.x0, N)
+                Aigs = [attr_of(E, Xig, pr, (stage, "ig", image, q)) for q in range(r_ig)]
+                del Xig
+                Ks = [int(k) for k in pr["Ks"]]
+                gaps = [abs(float(A.sum()) - E.D) / abs(E.D) if E.D else math.nan for A in Aigs]
                 for nm, d in dsets.items():
                     for s, ds in d.items():
-                        y = ds.project(Aig)[0]
-                        dF = ds.dF.to(y.device)
-                        grp = ds.group.to(y.device)
-                        rr["ig"].append({**base, "config": f"ig_N{N}", "dset": nm, "set": s, "group": "all",
-                                         "L": float(IC.infid(y, dF)), "den": float((dF * dF).sum()),
-                                         "compl_gap_abs": abs(float(Aig.sum()) - E.D) / abs(E.D) if E.D else math.nan})
-                        for gv in sorted(set(grp.tolist())):
-                            ix = torch.nonzero(grp == gv, as_tuple=True)[0]
-                            rr["ig"].append({**base, "config": f"ig_N{N}", "dset": nm, "set": s, "group": f"g{gv}",
-                                             "L": float(IC.infid(y[ix], dF[ix])), "den": float((dF[ix] ** 2).sum())})
-                rr["cost"].append({**base, "config": f"ig_N{N}", "grads": Counter.n - n0, "seconds": time.time() - t0, "paths": 1})
+                        Y = torch.cat([ds.project(A) for A in Aigs])                        # (r, n)
+                        dF = ds.dF.to(Y.device)
+                        grp = ds.group.to(Y.device)
+                        groups = [("all", None)] + [(f"g{gv}", torch.nonzero(grp == gv, as_tuple=True)[0]) for gv in sorted(set(grp.tolist()))]
+                        for gname, ix in groups:
+                            Yg, dg_ = (Y, dF) if ix is None else (Y[:, ix], dF[ix])
+                            den = float((dg_ * dg_).sum())
+                            if r_ig >= 2:
+                                st = IC.indep_core(Yg, dg_, Ks, c2_sizes=())
+                                L_mu, s2, L_one = st["L_mu"], st["sigma2"], st["mean_path_infid"]
+                            else:
+                                L_mu, s2, L_one = float(IC.infid(Yg, dg_)[0]), 0.0, float(IC.infid(Yg, dg_)[0])
+                            row = {**base, "config": f"ig_N{N}", "dset": nm, "set": s, "group": gname, "r": r_ig,
+                                   "L": L_mu, "L_mu": L_mu, "sigma2": s2, "L_one": L_one, "den": den,
+                                   **{f"J_{k}": L_mu + s2 / k for k in Ks}}
+                            if gname == "all":
+                                row["compl_gap_abs"] = float(np.nanmean(gaps))
+                            rr["ig"].append(row)
+                rr["cost"].append({**base, "config": f"ig_N{N}", "grads": Counter.n - n0, "seconds": time.time() - t0, "paths": r_ig})
                 if stage == "e2" and sc.get("external", True):
-                    rr["ext"].append({**base, "config": f"ig_N{N}", "family": "ig", "estimator": "ig",
-                                      **ext_metrics(E, Aig, sc, prep_ext(E, sc))})
+                    kq = min(keep_K or r_ig, r_ig)                                          # cùng ngân sách với rev K chính
+                    Aq = sum(Aigs[:kq]) / kq
+                    rr["ext"].append({**base, "config": f"ig_N{N}", "family": "ig", "estimator": f"ig_K{kq}",
+                                      **ext_metrics(E, Aq, sc, prep_ext(E, sc))})
+                del Aigs
             for nm, d in dsets.items():
                 if fit_key not in d:
                     continue
@@ -547,7 +567,7 @@ def estimate(cfg: dict, stage: str, sc: dict, per_eval: float) -> dict:
         g += sum(len(cc["designs"]) * int(cc["replicates"]) * sum(int(k) for k in cc["Ks"]) * NM(c) for c in sc["configs"]
                  if c["family"] in ("spi", "patch"))
     if sc.get("ig"):
-        g += int(sc.get("ig_N", 64)) * int(pr["M"])
+        g += int(sc.get("ig_N", 64)) * int(pr["M"]) * (max(2, int(sc.get("ig_repeats", 8))) if pr["rule"] == "rand" else 1)
     return {"grad_per_image": g, "minutes": int(sc["n_images"]) * g * per_eval / 60}
 
 
@@ -659,7 +679,7 @@ def write_report(cfg: dict) -> str:
     if cfg.get("_debug"):
         L.append("> **DEBUG** — chỉ kiểm pipeline, không dùng để kết luận.\n")
     lockp = prereg_path(cfg)
-    L.append(f"- Protocol: quy tắc `{pr['rule']}`, M = {pr['M']}, K chính = {Km}, δ₁ = {pr['delta1']}, δ₂ = {pr['delta2']}, "
+    L.append(f"- Protocol: quy tắc `{pr['rule']}` ({pr.get('quad_policy', '—')}), M = {pr['M']}, K chính = {Km}, δ₁ = {pr['delta1']}, δ₂ = {pr['delta2']}, "
              f"δ₃ = {pr['delta3']}; D chính `{D['primary']}`. Khoá: "
              + (f"`{json.load(open(lockp))['digest'][:12]}`" if os.path.exists(lockp) else "**chưa khoá**") + ".")
     L.append("- Đơn vị thống kê là ảnh; CI 95% bootstrap theo ảnh. Estimand chính = trung bình theo ảnh của infid chuẩn hoá từng ảnh; "
@@ -734,6 +754,23 @@ def write_report(cfg: dict) -> str:
             r["p sign-flip ≤ α"] = float((g.signflip_p <= al).mean()) if "signflip_p" in g else np.nan
             tab.append(r)
         L.append(md(pd.DataFrame(tab)))
+        sec = []
+        thr = float(pr["rho_min_vindep"])
+        for (c, dn), g in ev.groupby(["config", "dset"]):
+            r = {"config": c, "D": dn}
+            for K in [int(k) for k in (pr.get("K_secondary") or [])]:
+                if f"dV_{K}" in g:
+                    r[f"ΔV_D({K})"] = _ci_str(ci(g[f"dV_{K}"]))
+            ok = g.Vpath > thr
+            if ok.sum() >= 2:
+                r["1 − ρ̂ theo ảnh (TB tỷ số)"] = _ci_str(ci(1 - g.rho[ok]))
+                r["1 − ρ̂ gộp (tỷ số TB)"] = _ci_str(ST.boot_ratio((g.Vo - g.Ve)[ok], g.Vpath[ok], B, seed, al))
+                r["n ảnh (V̂_indep > ngưỡng)"] = int(ok.sum())
+            sec.append(r)
+        L.append("**Endpoint phụ** (mô tả, không đạt/trượt): ΔV_D ở K phụ và mức giảm tương đối 1 − ρ̂ = (V̂_o − V̂_e)/(V̂_e + V̂_o). "
+                 "Trung bình tỷ số theo ảnh và tỷ số của trung bình có thể khác nhau; ρ̂ không ổn định khi V̂_indep nhỏ. Với `rand`, "
+                 "nhiễu quadrature kéo 1 − ρ̂ về 0 nhưng không đổi ΔV_D.\n")
+        L.append(md(pd.DataFrame(sec)))
         L.append("**Bảng báo cáo bắt buộc** (trung bình theo ảnh, tập ô đánh giá):\n")
         L.append(mandatory_table(cfg, out, "e1a"))
         gr = ep[(ep.set == "eval") & (ep.group != "all")]
@@ -848,8 +885,37 @@ def h3_table(cfg: dict, out: str, ci) -> str:
     s = md(pd.DataFrame(rows))
     s += (f"\nH3 (phép thử giao–hợp: phải đạt CẢ hai so sánh, không cần hiệu chỉnh multiplicity): **"
           f"{ST.CONFIRM if allc else (ST.REJECT if any(d == ST.REJECT for d in decisions) else ST.OPEN)}**. Cấu hình chọn trên ảnh dev + "
-          "bộ ô chọn; đánh giá trên ảnh test + bộ ô đánh giá độc lập.\n")
+          "bộ ô chọn; đánh giá trên ảnh test + bộ ô đánh giá độc lập. L_D(μ_IG) đã khử nhiễu quadrature: L(Ā) − σ̂²_IG / r "
+          "(r lần rút U độc lập trên cùng đường thẳng).\n")
+    s += "\n" + budget_table(cfg, p, ig, sel["chosen_name"], ci, "E1b test")
     return s
+
+
+def budget_table(cfg: dict, p, ig, chosen: str, ci, label: str) -> str:
+    """Đối chứng PHỤ ở ngân sách hữu hạn: J_rev(K) của cấu hình chọn so với J_IG(K) = IG trung bình K lần rút U (mô tả, không đạt/trượt).
+    Cùng số gradient khi ig_N = N của cấu hình (K·N·M mỗi bên)."""
+    import pandas as pd
+    from .report import md
+    if ig is None or p is None:
+        return ""
+    pr = pcfg(cfg)
+    D = icfg(cfg)["D"]
+    q = p[(p.set == "eval") & (p.group == "all") & (p.dset == D["primary"]) & (p.config == chosen)].set_index("image")
+    g = ig[(ig.set == "eval") & (ig.group == "all") & (ig.dset == D["primary"])].set_index("image")
+    rows = []
+    for K in [int(k) for k in pr["Ks"]]:
+        if f"J_rev_{K}" not in q or f"J_{K}" not in g or K < 2:
+            continue
+        j = pd.concat([q[f"J_rev_{K}"].rename("spi"), g[f"J_{K}"].rename("ig")], axis=1).dropna()
+        if len(j):
+            rows.append({"K": K, "n ảnh": len(j), f"J_rev(K) {chosen}": float(j.spi.mean()), "J_IG(K)": float(j.ig.mean()),
+                         "J_IG − J_rev": _ci_str(ci(j.ig - j.spi))})
+    if not rows:
+        return ""
+    n_ig = int(g.config.iloc[0].split("_N")[-1]) if len(g) else None
+    n_c = int(q.N.iloc[0]) if "N" in q and len(q) else None
+    note = "" if n_ig == n_c else f" (ig_N = {n_ig} ≠ N = {n_c} ⇒ ngân sách KHÔNG bằng nhau)"
+    return (f"**Đối chứng phụ cùng ngân sách gradient ({label})**{note} — mô tả, không thuộc H3:\n\n" + md(pd.DataFrame(rows)))
 
 
 def e2_tables(cfg: dict, out: str, ci) -> str:
@@ -863,7 +929,13 @@ def e2_tables(cfg: dict, out: str, ci) -> str:
     cols = [c for c in ("L_mu", "Ve", "Vo", f"dV_{Km}", f"J_rev_{Km}", f"J_indep_{Km}") if c in ev]
     s = "**L_D(μ), V̂_e, V̂_o, ΔV_D, J theo từng D** (trung bình theo ảnh):\n\n" + md(ev.groupby(["dset", "config"])[cols].mean().reset_index())
     if ig is not None:
-        s += "\nIG:\n\n" + md(ig[(ig.set == "eval") & (ig.group == "all")].groupby(["dset", "config"]).L.mean().reset_index())
+        igc = [c for c in ("L_mu", "sigma2", "L_one", f"J_{Km}") if c in ig]
+        s += "\nIG (L_mu = khử nhiễu quadrature, L_one = một lần rút, J_K = trung bình K lần rút):\n\n" + \
+            md(ig[(ig.set == "eval") & (ig.group == "all")].groupby(["dset", "config"])[igc].mean().reset_index())
+        try:
+            s += "\n" + budget_table(cfg, p, ig, load_selection(cfg)["chosen_name"], ci, "E2")
+        except SystemExit:
+            pass
     tab = []
     for dn, g in ev.groupby("dset"):
         if f"dV_{Km}" in g:

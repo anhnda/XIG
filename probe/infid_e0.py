@@ -11,6 +11,9 @@ Từ cache attr.pt (bản đồ từng đường SPI, R seed × K đường) c�
      sàn L*_free, L*_comp ở mức patch G×G (G ∈ grids), λ chọn bằng CV trên tập fit, báo in-sample và out-of-sample.
   5. rank(P) của 96 ô; khoảng hở completeness; infid_β (co giãn tối ưu — chỉ chẩn đoán thang đo).
   6. G0 (cổng phân bổ tài nguyên một chiều): dư địa J_indep(K_G0) − L*_comp,patch là CẬN DƯỚI của dư địa thật.
+  7. Chẩn đoán làm mượt khối (không phải phương pháp mới): S_h A = trung bình A trong khối h×h px (bảo toàn tổng mỗi khối ⇒ bảo
+     toàn ΣA; KHÔNG giữ dummy). Đo L_D(A), L_D(S_h A), L̂(S_h μ) trên tập ô đánh giá độc lập. Giảm mạnh ⇒ phân bố không gian ở
+     độ phân giải cao đóng góp vào sai số; gần như không giảm ⇒ giả thuyết nhiễu tần số cao yếu đi.
 Đầu ra: <out>/pilot/infid/e0/{e0_images.csv, e0_kcurve.csv, e0_groups.csv, INFID_E0_REPORT.md}.
 """
 
@@ -35,7 +38,7 @@ from .pathbank import settings
 F64 = torch.float64
 E0_VERSION = 1
 E0_DEFAULT = {"n_fit": 1536, "n_eval": 512, "grids": [14, 28], "lams": [0.0, 1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1], "folds": 4,
-              "subsets_per_K": 200, "K_g0": 16, "allow_stale_attr": False}
+              "subsets_per_K": 200, "K_g0": 16, "allow_stale_attr": False, "smooth": [8, 16, 32]}
 
 
 def icfg(cfg: dict) -> dict:
@@ -182,7 +185,31 @@ def e0_image(ctx, cfg: dict, pc: dict, idx: int, cdir: str, attr: dict, scores: 
             row[f"G{G}_{k}"] = v
         row[f"G{G}_margin_J{Kg}"] = ev.get(f"J_{Kg}", ev["L_mu"] + ev["sigma2"] / Kg) - fl["L_comp_oos"]
         row[f"G{G}_bias_part"] = ev["L_mu"] - fl["L_comp_oos"]
-    return {"img": row, "kcurve": kc, "groups": gr}
+    sm = [{"image": E.image, "h": 1, "G": None, "L_mu": ev["L_mu"], "sigma2": ev["sigma2"], "L_spi": row["ev_spi_infid_seed"],
+           "L_path": ev["mean_path_infid"], "infid_beta_spi": row["ev_infid_beta_spi"]}]
+    for h in ec["smooth"]:
+        G = max(1, int(round(E.H / int(h))))
+        a_s = block_average(a.reshape(R * K, E.H, E.W), G)
+        Ys = ds_e.project(a_s, summed=True)
+        st = IC.indep_core(Ys, de, Ks, c2_sizes=())
+        sm.append({"image": E.image, "h": int(h), "G": G, "L_mu": st["L_mu"], "sigma2": st["sigma2"],
+                   "L_spi": float(np.mean([float(IC.infid(Ys.view(R, K, -1)[r].mean(0, keepdim=True), de)[0]) for r in range(R)])),
+                   "L_path": st["mean_path_infid"], "infid_beta_spi": float(IC.infid_beta(Ys.mean(0, keepdim=True), de)[0]),
+                   "sum_err": float((a_s.sum((1, 2)) - a.reshape(R * K, E.H, E.W).sum((1, 2))).abs().max())})
+        for k in ("L_comp_oos", "L_free_oos"):
+            if f"G{G}_{k}" in row:
+                sm[-1][f"floor_{k}"] = row[f"G{G}_{k}"]
+    return {"img": row, "kcurve": kc, "groups": gr, "smooth": sm}
+
+
+def block_average(a: torch.Tensor, G: int) -> torch.Tensor:
+    """a (P, H, W) → trung bình trong từng khối của lưới G×G (khối cuối nhận phần dư, như sampling.grid_pixel_labels).
+    Bảo toàn tổng mỗi khối ⇒ bảo toàn tổng toàn ảnh."""
+    P_, H, W = a.shape
+    lab = SM.grid_pixel_labels(H, W, G).to(a.device)
+    tot = torch.zeros(P_, G * G, dtype=a.dtype, device=a.device).index_add_(1, lab, a.reshape(P_, -1))
+    cnt = torch.zeros(G * G, dtype=a.dtype, device=a.device).index_add_(0, lab, torch.ones_like(lab, dtype=a.dtype))
+    return (tot / cnt.view(1, -1))[:, lab].view(P_, H, W)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -198,7 +225,7 @@ def run(ctx) -> None:
     ps_out = PS.out_dir(cfg)
     out = out_dir(cfg, "e0")
     idxs = ctx.sp["pilot"][:int(pc["n_images"])]
-    rows = {"img": [], "kcurve": [], "groups": []}
+    rows = {"img": [], "kcurve": [], "groups": [], "smooth": []}
     t0, f0 = time.time(), SM.FwdCounter.n
     for j, idx in enumerate(idxs):
         image = f"seg{idx:05d}"
@@ -232,9 +259,9 @@ def run(ctx) -> None:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         for k in rows:
-            rows[k] += [res[k]] if k == "img" else res[k]
+            rows[k] += [res[k]] if k == "img" else res.get(k, [])
     import pandas as pd
-    for k, name in (("img", "e0_images"), ("kcurve", "e0_kcurve"), ("groups", "e0_groups")):
+    for k, name in (("img", "e0_images"), ("kcurve", "e0_kcurve"), ("groups", "e0_groups"), ("smooth", "e0_smooth")):
         if rows[k]:
             pd.DataFrame(rows[k]).to_csv(os.path.join(out, f"{name}.csv"), index=False)
     with open(os.path.join(out, "meta.json"), "w") as fh:
@@ -246,6 +273,11 @@ def run(ctx) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # báo cáo
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _fmt_ci(t) -> str:
+    m, lo, hi = t
+    return f"{m:.4g} [{lo:.4g}, {hi:.4g}]" if np.isfinite(lo) else (f"{m:.4g}" if np.isfinite(m) else "—")
+
 
 def write_report(cfg: dict) -> str:
     import pandas as pd
@@ -334,6 +366,29 @@ def write_report(cfg: dict) -> str:
     if gr is not None:
         L.append("Tách theo cỡ ô (tập đánh giá; `share_den` = tỷ phần ΣΔF² của cỡ ô đó):\n")
         L.append(md(gr.groupby("group")[["n_sets", "share_den", "sigma2", "L_mu", "var_share_at_P"]].mean().reset_index()))
+    smd = _read(out, "e0_smooth")
+    if smd is not None:
+        L.append("## 3b. Chẩn đoán làm mượt khối S_h (bảo toàn tổng; tập ô đánh giá độc lập)\n")
+        L.append("S_h A = trung bình A trong khối h×h px — ánh xạ về bản đồ hằng theo khối, cùng không gian nghiệm với sàn patch "
+                 "(h = 8 ↔ lưới 28, h = 16 ↔ lưới 14). Đây là CHẨN ĐOÁN (không giữ dummy), không phải phương pháp SPI mới.\n")
+        base = smd[smd.h == 1].set_index("image")
+        tab = []
+        for h, g in smd.groupby("h"):
+            g = g.set_index("image")
+            r = {"h (px)": int(h), "L̂(S_h μ)": _fmt_ci(ST.boot_ci(g.L_mu, B, seed, al)),
+                 "L(S_h SPI)": _fmt_ci(ST.boot_ci(g.L_spi, B, seed, al)), "σ̂²(S_h)": _fmt_ci(ST.boot_ci(g.sigma2, B, seed, al)),
+                 "infid_β(S_h SPI)": float(g.infid_beta_spi.mean())}
+            if int(h) > 1:
+                j = base.L_mu.reindex(g.index)
+                r["log(L̂(μ)/L̂(S_h μ)) theo ảnh"] = _fmt_ci(ST.boot_ci(np.log(j.clip(lower=1e-12) / g.L_mu.clip(lower=1e-12)), B, seed, al))
+                if "floor_L_comp_oos" in g and g.floor_L_comp_oos.notna().any():
+                    r["L̂(S_h μ) − L*_comp,patch"] = _fmt_ci(ST.boot_ci(g.L_mu - g.floor_L_comp_oos, B, seed, al))
+                r["max |ΔΣA|"] = float(g.sum_err.max())
+            tab.append(r)
+        L.append(md(pd.DataFrame(tab)))
+        L.append("Đọc: L̂(S_h μ) giảm mạnh so với h = 1 ⇒ phân bố không gian ở độ phân giải dưới h px đóng góp lớn vào sai số "
+                 "(phù hợp giả thuyết dương/âm tần số cao). Nếu L̂(S_h μ) vẫn xa sàn patch cùng lưới ⇒ còn sai lệch ở chính tổng theo khối "
+                 "(độ lớn / hướng ở tần số thấp), không chỉ nhiễu tần số cao. infid_β = 1 − cos²(PA, ΔF) cho phần hướng.\n")
     L.append("## 4. G0 — cổng phân bổ tài nguyên (một chiều)\n")
     d0 = pr.get("delta0")
     for G in ec["grids"]:
@@ -355,7 +410,8 @@ def write_report(cfg: dict) -> str:
         for frac in (0.25, 0.5):
             tab.append({"K": k, "TB phần phương sai σ̂²/K": mu, "sd theo ảnh": sd, "δ (phần của TB)": frac,
                         "n ảnh cần": ST.n_required(sd, frac * mu)})
-    L.append("Phần phương sai σ̂²/K là trần của mức giảm mà ghép nối có thể đạt ở K (ΔV_D(K) ≤ σ̂²/K); sd lấy theo ảnh. Cỡ mẫu chính "
+    L.append("Phần phương sai σ̂²/K là TRẦN TRÊN của mức giảm mà ghép nối có thể đạt ở K (ΔV_D(K) ≤ σ̂²/K); với cache `rand`, σ̂² gồm cả "
+             "nhiễu quadrature τ²_D (xem INFID_QUAD_REPORT.md) — phần `rev` có thể loại bỏ chỉ nằm trong σ̂² − τ²_D. sd lấy theo ảnh. Cỡ mẫu chính "
              "cho H1 phải tính lại từ sd của ΔV_D trong E1a pilot.\n")
     L.append(md(pd.DataFrame(tab)))
     with open(rp, "w") as fh:

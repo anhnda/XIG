@@ -117,17 +117,30 @@ def straight_path(d: int, N: int = 1) -> torch.Tensor:
     return t.expand(1, N + 1, d).clone()
 
 
-def attribute(fn, Z: torch.Tensor, rule: str, M: int = 1, theta: float = 0.5, gl: int = 6, chunk: int = 8192) -> torch.Tensor:
+def attribute(fn, Z: torch.Tensor, rule: str, M: int = 1, theta: float = 0.5, gl: int = 6, chunk: int = 8192,
+              gen=None) -> torch.Tensor:
     """(B, d). rule ∈ left | mid | theta | exact (Gauss–Legendre `gl` điểm/đoạn = tích phân chính xác trên polyline cho đa thức
-    bậc ≤ 2gl−1)."""
-    s, w = offsets("gl", gl) if rule == "exact" else offsets(rule, M, theta)
-    s, w = s.to(Z.device), w.to(Z.device)
+    bậc ≤ 2gl−1) | rand (như aw_stream: s = (m + U)/M, U ~ U(0,1) riêng cho mỗi (đường, đoạn, m), dùng chung mọi phần tử;
+    mỗi lần gọi rút U mới ⇒ Z và RZ gọi riêng có nhiễu quadrature độc lập có điều kiện)."""
     B, N1, d = Z.shape
+    N = N1 - 1
+    if rule == "rand":
+        if gen is None:
+            raise ValueError("rule = rand cần gen")
+        w = torch.full((int(M),), 1.0 / int(M), dtype=F64, device=Z.device)
+    else:
+        s, w = offsets("gl", gl) if rule == "exact" else offsets(rule, M, theta)
+        s, w = s.to(Z.device), w.to(Z.device)
     out = []
     for b0 in range(0, B, chunk):
         Zb = Z[b0:b0 + chunk]
         dZ = Zb[:, 1:] - Zb[:, :-1]
-        P = Zb[:, :-1, None, :] + s.view(1, 1, -1, 1) * dZ[:, :, None, :]
+        if rule == "rand":
+            U = torch.rand(Zb.shape[0], N, int(M), generator=gen, device=gen.device, dtype=F64).to(Z.device)
+            sb = (torch.arange(int(M), device=Z.device, dtype=F64).view(1, 1, -1) + U) / int(M)
+            P = Zb[:, :-1, None, :] + sb[..., None] * dZ[:, :, None, :]
+        else:
+            P = Zb[:, :-1, None, :] + s.view(1, 1, -1, 1) * dZ[:, :, None, :]
         g = fn.grad(P.reshape(-1, d)).view(P.shape)
         out.append(((g * w.view(1, 1, -1, 1)).sum(2) * dZ).sum(1))
     return torch.cat(out)
@@ -147,16 +160,17 @@ def pair_mc(fn, d: int, alpha: float, N: int, rule: str, Pm: torch.Tensor, wts: 
     """V_e, V_o (THÔ, không chuẩn hoá — như Phụ lục), ρ, V_indep(2), V_rev(2), trung bình chiếu; SE theo nb lô × b cặp."""
     dev = gen.device
     Pm, wts = Pm.to(dev, F64), wts.to(dev, F64)
-    Ve, Vo, rho, mu = [], [], [], []
+    Ve, Vo, rho, mu, dv = [], [], [], [], []
     for _ in range(int(nb)):
         Z = dir_paths(alpha, N, b, d, gen)
-        y1 = attribute(fn, Z, rule, theta=theta) @ Pm.T
-        y2 = attribute(fn, rev(Z), rule, theta=theta) @ Pm.T
+        y1 = attribute(fn, Z, rule, theta=theta, gen=gen) @ Pm.T
+        y2 = attribute(fn, rev(Z), rule, theta=theta, gen=gen) @ Pm.T
         E, O = (y1 + y2) / 2, (y1 - y2) / 2
         ve = float((E.var(0, unbiased=True) * wts).sum())
         vo = float(((O ** 2).mean(0) * wts).sum())
         Ve.append(ve)
         Vo.append(vo)
+        dv.append(vo - ve)
         rho.append(2 * ve / (ve + vo) if ve + vo > 0 else math.nan)
         mu.append(float((y1.mean(0) * wts).sum()))
     ve, se_e = _mse(Ve)
@@ -164,7 +178,7 @@ def pair_mc(fn, d: int, alpha: float, N: int, rule: str, Pm: torch.Tensor, wts: 
     r = 2 * ve / (ve + vo) if ve + vo > 0 else math.nan
     _, se_r = _mse(rho)
     return {"Ve": (ve, se_e), "Vo": (vo, se_o), "rho": (r, se_r), "Vind2": ((ve + vo) / 2, math.hypot(se_e, se_o) / 2),
-            "Vrev2": (ve, se_e), "mu": _mse(mu)}
+            "Vrev2": (ve, se_e), "mu": _mse(mu), "VoVe": _mse(dv)}
 
 
 def row(toy, setting, rule, qty, est, se, oracle, ztol=4.0, atol=1e-9, rtol=1e-7, note=""):
@@ -310,6 +324,39 @@ def oracle_theta(tc: dict, gen) -> list:
     A75, Aex = attribute(f, Z, "theta", theta=0.75), attribute(f, Z, "exact")
     rows.append(row("T6 họ θ", "A^θ − A^exact = (θ − ½)·(B∘H)1, θ = 0,75", "theta", "max sai khác", float((A75 - Aex - corr).abs().max()),
                     0.0, 0.0, atol=1e-10))
+    return rows
+
+
+def oracle_c3(tc: dict, gen) -> list:
+    """C3a: `rand` không chệch CÓ ĐIỀU KIỆN theo đường (cố định Z, trung bình theo U → tích phân chính xác trên polyline, f phi tuyến).
+    C3b: nhiễu quadrature độc lập trong cặp (Z, RZ) cộng τ²/2 vào CẢ V_e lẫn V_o ⇒ V_o − V_e không đổi so với tích phân chính xác."""
+    rows = []
+    dev = gen.device
+    nb, b = int(tc["nb"]), int(tc["b"])
+    f = Auto(lambda Z: torch.sigmoid(4 * Z.sum(1) - 6) * (1 + Z[:, 0]), "sigmoid")
+    Z1 = dir_paths(3.0, 8, 1, 3, gen)
+    ex = attribute(f, Z1, "exact", gl=12)[0]
+    acc = [attribute(f, Z1.expand(b, -1, -1), "rand", gen=gen).mean(0) for _ in range(nb)]
+    acc = torch.stack(acc)
+    mu, se = acc.mean(0), acc.std(0, unbiased=True) / math.sqrt(nb)
+    for i in range(3):
+        rows.append(row("C3a rand không chệch | Z", "f=σ(4Σz−6)(1+z1), d=3, N=8, α=3, 1 đường cố định", "rand", f"E_U[A_{i + 1}]",
+                        float(mu[i]), float(se[i]), float(ex[i])))
+    # C3b, f bậc 2: tích phân chính xác ⇒ V_e = 0 (T4), V_o = 1/24 ⇒ với rand: V_o − V_e = 1/24, V_e = τ²/2 > 0
+    h = quad_from_terms(2, cross={(0, 1): 1.0}, sq={0: 10.0}).to(dev)
+    one = torch.ones(1, dtype=F64)
+    r = pair_mc(h, 2, 2.0, 2, "rand", _P(2, [(0,)]), one, nb, b, gen)
+    s = "f=10z1²+z1z2, N=2, α=2, S={1}, U độc lập trong cặp"
+    rows.append(row("C3b nhiễu độc lập trong cặp", s, "rand", "V_o − V_e", *r["VoVe"], 1 / 24))
+    rows.append(row("C3b nhiễu độc lập trong cặp", s, "rand", "V_e (= τ²/2 > 0)", *r["Ve"], r["Ve"][0], note="chỉ báo, oracle = chính nó"))
+    # C3b, f phi tuyến: V_o − V_e (rand) − V_o − V_e (chính xác) = 0
+    g3 = Auto(lambda Z: torch.sigmoid(3 * Z[:, 0] * Z[:, 1] + Z[:, 2] - 1.5), "sig3")
+    P3 = _P(3, [(0,), (1, 2)])
+    w3 = torch.ones(2, dtype=F64)
+    ra = pair_mc(g3, 3, 3.0, 4, "rand", P3, w3, nb, b // 4, gen)
+    re = pair_mc(g3, 3, 3.0, 4, "exact", P3, w3, nb, b // 4, gen)
+    rows.append(row("C3b nhiễu độc lập trong cặp", "f=σ(3z1z2+z3−1,5), d=3, N=4, α=3, D={1},{2,3}", "rand − exact",
+                    "(V_o − V_e)_rand − (V_o − V_e)_exact", ra["VoVe"][0] - re["VoVe"][0], math.hypot(ra["VoVe"][1], re["VoVe"][1]), 0.0))
     return rows
 
 
@@ -556,7 +603,8 @@ def run_small(cfg: dict) -> None:
     rows = []
     for name, fnc in (("deterministic", lambda: oracle_deterministic()), ("var_w", lambda: oracle_var_w(tc, gen)),
                       ("H", lambda: oracle_H(tc, gen)), ("left_sq", lambda: oracle_left_sq(tc, gen)),
-                      ("rho", lambda: oracle_rho(tc, gen)), ("theta", lambda: oracle_theta(tc, gen))):
+                      ("rho", lambda: oracle_rho(tc, gen)), ("theta", lambda: oracle_theta(tc, gen)),
+                      ("c3", lambda: oracle_c3(tc, gen))):
         r = fnc()
         rows += r
         print(f"  [toy] {name}: {sum(x['pass'] for x in r)}/{len(r)} khớp, {time.time() - t0:.0f}s", flush=True)
