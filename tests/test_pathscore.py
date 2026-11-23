@@ -115,18 +115,14 @@ def test_figures_and_tables_on_synthetic(tmp_path):
     assert len(files) == 4 and all(os.path.exists(f) for f in files)
 
 
-def test_config_separate_from_p4():
-    from probe.sampling_benchmark import digests, settings
+def test_config_and_digests():
+    from probe.pathbank import settings
     cfg = _cfg()
     S = settings(cfg)
     pc = PS.pcfg(cfg)
     assert list(pc["mask_bases"]) == ["blur", "black", "white", "grey", "mean"]
-    d0 = digests(cfg, S)
-    assert "pathscore" not in d0
     cfg2 = copy.deepcopy(cfg)
     cfg2["pathscore"]["mask_bases"] = ["blur", "black"]
-    assert digests(cfg2, settings(cfg2)) == d0                        # đổi pathscore không đụng cache P4
-    assert C.digest(cfg2) == C.digest(cfg)                            # cũng không đụng P0–P3
     p0, p2 = PS.digests(cfg, S, pc), PS.digests(cfg2, settings(cfg2), PS.pcfg(cfg2))
     assert p0["attr"] == p2["attr"] and p0["scores"] != p2["scores"]   # đổi metric: không phải tính lại bản đồ
     e = PS.estimate(S, pc, 0.002, 0.0007)
@@ -267,7 +263,7 @@ def test_figures_with_extra_metrics(tmp_path):
 
 def test_extra_config_and_digest():
     cfg = _cfg()
-    from probe.sampling_benchmark import settings
+    from probe.pathbank import settings
     S, pc = settings(cfg), PS.pcfg(cfg)
     xm = PS.xcfg(pc)
     assert xm["loc"] and xm["road"]["enabled"] and xm["subset"]["enabled"]

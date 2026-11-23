@@ -41,10 +41,10 @@ from . import pathscore_metrics as PM
 from . import sampling as SM
 from .data import MEAN, STD
 from .metrics import iou, make_base, spearman
-from .pilot import Ctx, sync
+from .ctx import Ctx, sync
 from .quad import Counter
 from .report import fmt, md
-from .sampling_benchmark import Bank, Env, _cos, _h, _load, bench_fwd, provenance, settings
+from .pathbank import Bank, Env, _cos, _h, _load, bench_fwd, provenance, settings
 
 VERSION = 2
 MASK_KINDS = ("blur", "black", "white", "grey", "mean")
@@ -145,7 +145,8 @@ def report_path(cfg: dict) -> str:
 
 def digests(cfg: dict, S: dict, pc: dict) -> dict:
     a = _h({"v": VERSION, "seed": cfg["seed"], "model": cfg["model"], "data": cfg["data"], "alpha": S["alpha"], "N": S["N"],
-            "M": S["M"], "spi_from": S.get("spi_from"), "K": int(pc["K"]), "seeds": int(pc["seeds"])})
+            "M": S["M"], "spi_from": S.get("spi_from"), "K": int(pc["K"]), "seeds": int(pc["seeds"]),
+            **({"rule": S["rule"]} if S.get("rule", "rand") != "rand" else {})})
     s = _h({"attr": a, "bases": list(pc["mask_bases"]), "insdel": cfg["metrics"]["insdel"], "steps": int(S["insdel_steps"]),
             "top_frac": float(pc.get("top_frac", 0.05)), "proxies": PROXIES, "sv": SCORES_VERSION, "extra": xcfg(pc)})
     return {"attr": a, "scores": s}
@@ -323,7 +324,7 @@ def write_csvs(out: str, names: list) -> None:
 
 
 def run(ctx: Ctx) -> None:
-    from .pilot import bench
+    from .ctx import bench
     cfg = ctx.cfg
     S = settings(cfg)
     pc = pcfg(cfg)
@@ -542,8 +543,8 @@ def _yerr(v, lo, hi):
 
 
 def make_figures(out: str, bases: list, cs, cr, sp, bom, paths, K: int, extra=()) -> list:
-    from .sampling_report import _plt
-    plt = _plt()
+    from .plots import _setup
+    plt = _setup()
     files = []
     keys = list(bases) + [m for m in extra if m not in bases]
     n = len(keys)

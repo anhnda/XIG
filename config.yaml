@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# attr_probe — Attribution Mechanism Pilot (P0–P3).
+# attr_probe — proposal "Lấy mẫu đường SPI theo infidelity" (protocol v1.0).
 # --debug: ghi đè bằng mục `debug:` (ít ảnh, ít bước), ghi vào <out>_debug.
 # Viết số thực dạng 0.0001; vô cực viết .inf.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -12,313 +12,28 @@ model:
   allow_tf32: false
   batch: 64                  # số trạng thái mỗi lần forward+backward
 
-data:
+data:                        # KHÔNG đổi: quyết định ảnh của các split (pilot / confirm / other / fresh)
   size: 224
   index_seed: 7
   n_pilot: 20
   n_confirm: 50
   n_other: 10
 
-# Họ đường (chỉ sinh nút; ig phải có, là đường tham chiếu cho bẫy).
-paths:
-  ig:     {kind: straight, steps: 128}
-  spi10:  {kind: spi, alpha: 10, steps: 64, paths: 32, k_group: 8}   # k_group: cỡ nhóm cho thống kê K=8
-  guided: {kind: guided, steps: 128, fraction: 0.25, max_dist: 0.02}
-  blur:   {kind: blur, steps: 100, max_sigma: 50.0}
-
-# Điểm cầu phương thêm (ngoài nút) ở stage main. canon_left luôn có.
-# Quy tắc canonical chính của P1–P3 = canon_rand nếu có "rand".
-quadrature: [rand]
-idgi_zero_tol: 1.0e-12       # bỏ bước IDGI có ‖g_k‖² ≤ tol · max_k ‖g_k‖²; ΔF bị bỏ báo trong dropped_dF_rel
-
 metrics:
   topk_frac: 0.05
   insdel: {bases: [blur, black], n_steps: 50, batch: 26, blur_kernel: 31, blur_sigma: 10.0}
 
-# P0 — hội tụ (lưới lồng nhau; N phải là bội của nhau)
-convergence:
-  n_images: 3
-  N: [32, 64, 128, 256]
-  spi_realizations: 4
-  quadrature: [left, mid, rand]
+# Đường SPI hiện tại (S0 / SPI baseline): α = 10, N = 64.
+paths:
+  spi10:  {kind: spi, alpha: 10, steps: 64}
 
-# P1 — đường × quy tắc
-exp_a:
-  n_images: 16
-  diag_step_images: 3        # số ảnh ghi chẩn đoán IDGI từng bước (idgi_steps.csv)
-  heatmap_images: 2
-
-# P2 — tín hiệu cộng tính đã biết (trên exp_c.n_images ảnh đầu của exp_a)
-exp_c:
-  n_images: 6
-  B_frac: 0.5                # tổng đóng góp đúng B = ±B_frac·|F(x) − F(x′)|
-  sizes: [2, 8, 24]          # cạnh ô vuông (pixel, cả 3 kênh): 4 / 64 / 576 pixel = 12 / 192 / 1728 phần tử
-  locations: [inside, outside]
-  neg_sign_for: [24]         # thêm dấu âm cho các cỡ này
-  scatter_pixels: 576        # tín hiệu phân tán: 576 pixel ngẫu nhiên (1728 phần tử), cùng số phần tử với ô 24×24
-  scatter_signs: [1, -1]
-  inside_min: 0.8
-  outside_max: 0.05
-  min_denominator: 0.05      # trung bình (x − x′) trên R tối thiểu (đơn vị chuẩn hoá)
-  tries: 400
-  region_retries: 20
-
-# P3 — bẫy gradient quanh đường IG (trên exp_b.n_images ảnh đầu của exp_a). Lưới chéo, không đầy đủ:
-#   ρ ∈ rho với η = eta_ref;  η ∈ eta với ρ = rho_ref;  + u tần số thấp tại (rho_ref, eta_ref)
-exp_b:
-  n_images: 6
-  rho: [0.03, 0.1, 0.2, 0.3]
-  eta: [0.1, 1.0, 3.0]
-  rho_ref: 0.1
-  eta_ref: 1.0
-  u_low_at_ref: true
-  low_sigma: 8.0             # σ (pixel) làm mượt u kiểu "low"
-  noise_sigma: 0.1           # kiểm hành vi: H tại x + N(0, σ²)
-  noise_samples: 16
-  n_other: 4                 # số ảnh khác (split other) để đo |H|
-
-# E1–E3: phân rã cơ chế (mục này có hash riêng, sửa không làm mất cache pilot)
-mechanism:
-  e1:
-    n_images: 3
-    ig_steps: 64             # IG: đường cố định, N đoạn
-    spi_paths: [0, 1, 2, 3]  # đường SPI của pilot (cùng seed), N = paths.spi10.steps
-    M: [1, 2, 4, 8, 16]      # điểm/đoạn; lồng nhau, ref = M lớn nhất
-    dp_N: [64, 128, 256]     # cùng một đường DP rút ở N lớn nhất, gộp cho lưới thô
-    dp_points: 1024          # tổng số điểm cầu phương mỗi lưới (M = dp_points / N)
-    dp_realizations: 2
-    toy: {seed: 11, d: 32, alpha: 10, b_scale: 1.0, c_scale: 2.0, N_fine: 2048, N: [16, 32, 64, 128, 256, 512], paths: 300}
-  e2:
-    n_images: 16             # = ảnh của pilot exp_a
-    paths: 64                # 32 đường đầu trùng pilot
-    M: 2                     # điểm/đoạn (tầng)
-    ig_steps: 128
-    K_checkpoints: [1, 2, 4, 8, 16, 32, 64]
-    per_path_insdel: true    # insertion/deletion (baseline blur) cho từng đường K=1
-    heatmap_images: 2
-  e3:
-    n_images: 6              # = ảnh bẫy của pilot; dùng chung đường và điểm với E2
-    rho: [0.03, 0.1, 0.2, 0.3]
-    eta: 1.0
-    u_low_at: 0.1            # thêm u tần số thấp tại ρ này (null để bỏ)
-
-# E1′ + E4: cổng số học bổ sung và so sánh xuyên phương pháp (hash riêng, không làm mất cache pilot/mechanism)
-cross:
-  mode_sigma: 2.0            # σ (px) tách tần số thấp/cao của gradient
-  focus_images: [seg03807]   # ảnh đối chứng (SPI giảm exposure nhưng IoU giảm)
-  gate:
-    n_images: 3
-    spi_paths: 16            # đường pilot 0..15
-    M: [2, 4, 8]             # lồng nhau trên cùng đường
-    ig_steps: 128
-    toy: {seed: 11, d: 32, alpha: 10, b_scale: 1.0, c_scale: 2.0, q_scale: 3.0, q_dirs: 8,
-          N_fine: 1024, N: [16, 32, 64, 128, 256], paths: 200, w_points: 4096}
-  e4:
-    n_images: 16             # cùng 16 ảnh pilot (gồm seg03807)
-    M: 4                     # điểm/đoạn
-    spi_paths: 32
-    ig_steps: 128            # IG và đoạn thẳng blur → x
-    guided_steps: 128
-    blur_steps: 100
-    tau_bins: 10
-    dist_bins: [0.0, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 10.0]
-    heatmap_images: 3
-  e4d:                       # hội tụ heatmap đầu ra (tương quan thứ hạng giữa các phương pháp)
-    n_images: 16
-    M: 4                     # điểm/đoạn cho MỖI bộ cầu phương (đường tất định có 2 bộ độc lập → trần độ tin cậy)
-    ig_steps: 128
-    guided_steps: 128
-    blur_steps: 100
-    spi_paths: 32            # đường pilot 0..31; hai nửa chẵn/lẻ → trần độ tin cậy của SPI
-    k_curve: [1, 2, 4, 8, 16, 32]
-    pools: [4, 16]           # Spearman/Kendall thêm ở 56×56 và 14×14
-    topk: [0.05, 0.1, 0.2]
-    heatmap_images: 3
-  e4c:
-    n_images: 16
-    alphas: [1000, 100, 30, 10, 3, 1]
-    paths: 8
-    M: 2
-    per_path_insdel: true
-
-# E5: bất đồng bộ hay chọn feature theo gradient (hash riêng)
-e5:
-  n_images: 16               # cùng 16 ảnh pilot (gồm seg03807)
-  M: 2                       # điểm/đoạn cho MỖI bộ cầu phương (a, b) → 4 điểm/đoạn tổng
-  ig_steps: 128              # IG và đoạn thẳng blur → x
-  blur_steps: 100
-  guided_steps: 128
-  spi_paths: 16              # đường pilot 0..15 (N = paths.spi10.steps)
-  spi_perm_paths: 8          # đối chứng âm: hoán vị "bin" chính 8 đường SPI đầu
-  lam_paths: 8               # P2: đường λ khớp hình học Guided
-  perm_kinds: [bin, pixel, block]
-  perm_draws: 2
-  perm_bins: 10              # thập phân vị |Δx| cho bin/pixel
-  block: 16                  # cạnh khối (px) cho "block"
-  pairs: [[spi, guided], [spi, guided_perm_bin], [guided, guided_perm_bin], [guided, guided_perm_pixel],
-          [guided, guided_perm_block], [spi, spi_lam], [guided, spi_lam], [spi_first, spi_perm_bin], [spi, blur], [guided, blur]]
-  heatmap_images: 3
-  signal: {n_images: 6, sizes: [24], locations: [inside, outside], B_frac: 0.5, inside_min: 0.8, outside_max: 0.05,
-           min_denominator: 0.05, tries: 400}
-
-# E6: cô lập gradient guidance (A) và cấu trúc đồng bộ (B) (hash riêng)
-e6:
-  split: pilot               # pilot = exploratory (16 ảnh cũ); confirm = 50 ảnh mới, lần chạy đầu ghi e6_prereg.json
-  n_images: 16
-  A: {N: 128, M: 4, perm_seeds: 6, perm_bins: 10, donors: 2, spi_paths: 4}
-  B: {N: 64, M: 4, paths: 4, kinds: [indep, rgb, block4, block16, block56, global]}
-
-# E7: nhóm đồng bộ cùng cỡ — bố trí không gian hay số/cỡ nhóm (hash riêng; exploratory trên 16 ảnh pilot)
-e7:
-  n_images: 16
-  S: {N: 64, M: 4, paths: 4, kinds: [indep, rgb, block4, rand16, block16, rand256, global]}
-  Njump: {n_images: 6, N: 256, M: 2, paths: 2, kinds: [indep, block4, rand16]}
-  Q: {n_images: 6, N: 128, M_hi: 16, M_lo: 4, perm_seeds: 4, donors: 2}
-
-# E8: XÁC NHẬN HELD-OUT. Lần chạy đầu ghi e8_prereg.json + E8_PREREG.md; sau đó KHÔNG sửa mục này
-# (và paths / metrics / model / data / seed) — mọi lần chạy sau phải trùng hash, nếu không chương trình dừng.
-e8:
-  split: confirm             # 50 ảnh chưa dùng (không giao pilot, không giao 250 ảnh của các đợt trước)
-  n_images: 50
-  alpha: 10
-  N: 64
-  N_fine: 256                # lịch trình rút ở N_fine rồi cộng gộp xuống N (cùng realization cho cổng số học)
-  M: 4                       # điểm cầu phương phân tầng mỗi đoạn
-  K: 4                       # đường mỗi kiểu nhóm mỗi ảnh; metric từng đường (K = 1), trung bình trong ảnh
-  kinds: [indep, rgb, rand16, block4, block16, rand256, global]
-  gate: {n_images: 12, kinds: [block16, rand256], M: 2}
-  stats: {bootstrap: 10000, alpha: 0.05, seed: 8}
-  global_signed_ratio_max: 1.5   # ‖A_global − A_IG,a‖₁ / ‖A_IG,b − A_IG,a‖₁ (median qua ảnh)
-  hypotheses:
-    - {id: H1, a: rgb, b: indep, metrics: [iou, insdel_blur], test: two_sided, family: primary}
-    - {id: H2, a: rand16, b: rgb, metrics: [iou, insdel_blur, insdel_black], test: equivalence, margin: 0.02}
-    - {id: H3, a: block4, b: rand16, metrics: [insdel_black], test: less, family: primary}
-    - {id: H4, a: block16, b: rand256, metrics: [exposure_ratio, insdel_black], test: two_sided, family: primary}
-    - {id: H5, a: global, b: ig, metrics: [iou, insdel_blur, insdel_black], test: equivalence, margin: 0.01}
-  secondary_guided: {enabled: true, N: 128, M: 8, donors: 2}
-
-# E9: cơ chế (hash riêng; dùng lại seed và realization của E8 cho A1/A2 nên phụ thuộc mục e8)
-e9:
-  A: {split: confirm, n_images: 6, K: 4, M: [16, 64], ref_N: 256, ref_M: 16}   # A1: bất biến global ≡ IG
-  H1: {n_images: 8, M: 4}                                                         # A2: rgb − indep ở N_fine của E8
-  B: {split: pilot, n_images: 16, alpha: 10, N: 64, M: 4, K: 8, q: [0, 0.25, 0.5, 0.75, 1], per_path_insdel: true,
-      interaction: {grid: 8, t: [0.25, 0.5, 0.75], step: 0.5}}
-
-# OCS — Output Convergence Study (hash riêng). split: pilot = exploratory (16 ảnh cũ); fresh = ảnh CHƯA dùng ở bất kỳ lượt nào
-# (lần chạy fresh đầu tiên ghi ocs_prereg.json; sau đó không sửa mục này). Luật quyết định nằm ở `decision`.
-ocs:
-  split: pilot
-  n_images: 16
-  M: 4                       # điểm/đoạn cho MỖI bộ cầu phương (đường tất định có 2 bộ → within)
-  ig_steps: 128
-  guided_steps: 128
-  blur_steps: 100
-  spi_paths_per_half: 16     # hai tập đường SPI rời nhau (đường pilot 0..15 và 16..31)
-  k_list: [1, 2, 4, 8, 16]
-  shuffle_block: 16          # null: xáo khối 16×16 của bản đồ thứ hai
-  metrics: {pools: [4, 16], topk: [0.01, 0.05, 0.1, 0.2], rbo_p: 0.998, radii: [2, 4, 8], sw_proj: 64, sw_pool: 4}
-  consensus: {methods: [spi, guided, blur], top_frac: 0.1, draws: 8, min_size: 50, bases: [blur, black]}
-  decision: {key_pair: [spi, guided], rank_ratio_min: 0.8, signed_ratio_min: 0.8, sign_agree_min: 0.8,
-             consensus_base: blur, consensus_metric: del_logit}
-  heatmap_images: 3
-
-# E10 — Random Path Family Ablation (hash riêng). Chạy trên ảnh fresh CHƯA dùng (bỏ qua fresh_offset ảnh đầu, dành cho OCS);
-# lần chạy đầu ghi e10_prereg.json (kèm kết quả hiệu chuẩn δ, σ); sau đó KHÔNG sửa mục này.
-e10:
-  split: fresh
-  fresh_offset: 100
-  n_images: 50
-  alpha: 10
-  N: 64
-  M: 4
-  K_half: 8                  # hai tập 8 đường rời nhau; đầu ra chính = trung bình 16 đường
-  per_path_insdel: false
-  gate: {n_images: 6, paths: 4, M_hi: 16}       # sai số cầu phương: cùng đường, M so với M_hi
-  calib: {d: 20000, seed: 10}                    # Monte Carlo hiệu chuẩn σ (không dùng ảnh)
-  metrics: {pools: [4, 16], topk: [0.05, 0.1, 0.2], rbo_p: 0.998, radii: [4], sw_proj: 32, sw_pool: 4}
-  stats: {bootstrap: 10000, alpha: 0.05, seed: 10}
-  hypotheses:
-    - {id: H1, a: smooth, b: dp, metrics: [iou, insdel_blur, insdel_black], test: equivalence, margin: 0.02}
-    - {id: H2, a: lognormal, b: dp, metrics: [iou, insdel_blur, insdel_black], test: equivalence, margin: 0.02}
-    - {id: H3, a: smooth, b: dp, metrics: [stab_cos_elem, stab_spearman_abs], test: two_sided, family: primary}
-    - {id: H4, a: lognormal, b: dp, metrics: [stab_cos_elem, stab_spearman_abs], test: two_sided, family: primary}
-    - {id: H5, a: dp, b: ig, metrics: [iou, insdel_blur, insdel_black], test: two_sided, family: primary}
-
-# E11 — LIG chỉ Phase 1 (tối ưu μ, không tối ưu đường) trên mẫu đường SPI và biến thể cho trước (hash riêng).
-e11:
-  split: pilot               # pilot = exploratory; fresh = ảnh chưa dùng, bắt đầu từ fresh_offset (sau OCS và E10)
-  fresh_offset: 200
-  n_images: 16
-  N: 50                      # số bước như bài LIG
-  K: 6                       # mẫu đường mỗi họ (IG: 1)
-  alpha: 10
-  calib: {d: 20000, seed: 10}                  # δ, σ cho smooth / lognormal (khớp D với DP α như E10)
-  paths: [ig, "dp:10", "dp:1", "dp:100", smooth, lognormal, "rgb:10", "block4:10"]
-  estimators: [uniform, uniform_rescale, lig, lig_norescale, lig_legacy, lig_tau, mu_df, mu_proj]
-  lam: 1.0                   # mặc định của bài
-  tau: 0.01
-  tau_alt: 1.0               # lig_tau: τ lớn hơn, μ ít dồn hơn
-  mu_iter: 300
-  per_path_insdel: true
-  insdel_bases: [blur, black]
-  insdel_steps: 50
-  rule: {win_rate_min: 0.8, metrics_min: 2}
-
-# E12 — R_nl có dự đoán khi nào exploration quá mạnh gây hại? (hash riêng; ảnh fresh từ fresh_offset, sau OCS / E10 / E11;
-# lần chạy đầu ghi e12_prereg.json; sau đó KHÔNG sửa mục này)
-e12:
-  split: fresh
-  fresh_offset: 300
-  n_images: 40
-  N: 64
-  M: 4
-  K: 16
-  families: [dp]             # thêm lognormal (khớp D theo từng α) CHỈ khi R_nl đạt trường hợp 2
-  levels: {dp: [1, 10, 100, 1000], lognormal: [1, 10, 100, 1000]}
-  calib: {d: 20000, seed: 12}
-  per_path_insdel: true
-  insdel_bases: [blur, black]
-  insdel_steps: 50
-  gate: {n_images: 8, K: 4, M: [4, 8, 16, 32], M_hi: 32}
-  decision: {low_level: 1, ref_level: 10, metrics_min: 2, gate_tol: 0.01}
-
-# P4 — Real-CNN Stochastic Path Sampling Benchmark (hash riêng theo khối; không làm mất cache P0–P3 / E*).
-# S0 = đúng SPI hiện tại: α, N lấy từ paths.<spi_from> (không ghi đè được). Mọi đường tốn N·M lượt forward+backward.
+# Tham số đường dùng chung cho PATHSCORE (đầu vào E0). α, N lấy từ paths.<spi_from>.
 sampling:
   spi_from: spi10
-  M: 1                       # điểm cầu phương phân tầng mỗi đoạn; M = 1 ≡ canon_rand (estimator canonical của P1–P3)
-  n_images: 16               # tiền tố split pilot (đúng 16 ảnh của P1 exp_a); không chọn ảnh theo kết quả
-  seeds: 4                   # ensemble độc lập mỗi (ảnh, phương pháp, K)
-  K: [2, 4, 8, 16]           # luỹ thừa của 2; các K là tiền tố của cùng ngân hàng đường (thiết kế cân bằng lồng nhau)
-  grid: 7                    # lưới patch chính 7×7 (patch 32×32 trên 224×224)
-  eta: 0.0                   # η của lượt chính: 0 = lịch trình thuần cấp patch
-  primary: [S0, S1, S2, S3, S4, S6]    # S6 = đối chứng cùng operator cho S2/S3/S4 (bắt buộc để tách "đổi operator" và "cân bằng")
-  reference:
-    enabled: true
-    K: 64                    # đường độc lập cho μ_ref mỗi operator (khoá riêng, không rò vào ensemble)
-    operators: [spi, patch]  # patch = lưới chính, η chính
-    quad_gate_paths: 4       # nhiễu cầu phương: cùng đường S0, thêm một bộ U độc lập
-  secondary:                 # thứ tự ưu tiên; chỉ chạy khi ước tính còn trong budget.secondary_minutes
-    # A — cân bằng giữa các đường nhưng mỗi phần tử có lịch riêng (đúng q_SPI, cùng hình dạng số gia với S0)
-    - {name: pixel, methods: [S2p, S3p, S4p]}
-    # B — quét η, mỗi η có đối chứng độc lập S6 cùng η (η = 0 là lượt chính; η = 1 ≡ đường S0, kiểm tra operator biến mất)
-    - {name: eta05, methods: [S6, S2, S4], eta: 0.5}       # giữ tên/cấu hình cũ ⇒ dùng lại cache
-    - {name: eta025, methods: [S6, S2, S4], eta: 0.25}
-    - {name: eta075, methods: [S6, S2, S4], eta: 0.75}
-    - {name: eta1, methods: [S6, S2, S4], eta: 1.0}
-    - {name: controls, methods: [S5, S7]}
-    - {name: grid14, methods: [S6, S2, S4], grid: 14}
-  # C — cùng tập đường (seed `seed` của ensemble chính), cầu phương M điểm/đoạn; lệnh riêng: bash scripts/run.sh sampling-quad
-  quad_check: {n_images: 4, seed: 0, M: [1, 2, 4, 8], methods: [S0, S2, S6]}
-  lime: {n_samples: 256, kernel_width: 0.25, ridge: 1.0, tau: 0.25}    # S7: prior thứ tự mềm (high-last); forward tính riêng
+  M: 1                       # điểm cầu phương mỗi đoạn; rule mặc định "rand" (= canon_rand, khớp cache attr.pt cũ)
   insdel_bases: [blur, black]
   insdel_steps: 50
-  signed_ranking_secondary: true      # thêm InsDel xếp hạng theo Σ_c A (có dấu) ở K = K_max — phân tích PHỤ, có nhãn
-  overlap_tol: 0.125         # hai patch "chồng thời gian" nếu |τ_g − τ_h| < tol
-  locality: {n_null: 20}     # D3: số hoán vị cho mức nền
-  keep_seed_maps: false      # giữ bản đồ ensemble từng seed trong cache sau khi đã tổng hợp ảnh
-  budget: {minutes: 30, secondary_minutes: 120, quad_minutes: 30, slack: 1.25, enforce: true}
-  stats: {bootstrap: 10000, seed: 4, alpha: 0.05, min_effect: 0.01, min_images: 16, win_frac: 0.5}
+  stats: {bootstrap: 10000, seed: 4, alpha: 0.05}
 
 # PATHSCORE — eval riêng (tách khỏi P4): InsDel của TỪNG đường SPI, đánh giá chéo giữa các nền mask của InsDel.
 # Dùng chung từ `sampling:` các tham số để so được: SPI α, N (paths.spi10), M, insdel_steps, stats.bootstrap. Hash riêng.
@@ -347,60 +62,121 @@ pathscore:
       sizes: [16, 32, 56]    # cạnh ô (px), luân phiên
   report_extra: null         # null = mọi metric bổ sung có trong CSV; hoặc danh sách con, ví dụ [iou, pointing, road, infid]
 
+# ─────────────────────────────────────────────────────────────────────────────
+# INFID — proposal "Lấy mẫu đường SPI theo infidelity" (RQ1 inter-path, RQ2 intra-path). Hash riêng (không làm mất cache khác).
+# Trình tự: infid-test → toy / toy-large → pathscore-infid-decomp (E0) → quad-check (C3) → sampling-infid-pilot
+#           → (điền K_main, δ₁–δ₃, rule/M vào protocol) → infid-lock → sampling-infid-e1a → e1b-dev → e1b-test → e2.
+# Sau infid-lock KHÔNG sửa protocol / D / e1a / e1b / e2 (các bước sau khoá kiểm hash và dừng nếu khác).
+infid:
+  protocol:
+    rule: mid                # quy tắc tích phân cho thí nghiệm mới (rand = mặc định cũ của P4/PATHSCORE; left = cờ tương thích)
+    M: 1                     # điểm gradient MỖI ĐOẠN; khoá sau quad-check
+    K_main: null             # K của endpoint chính (chọn từ pilot, trước khi mở tập test)
+    Ks: [1, 2, 4, 8, 16]
+    delta0: null             # G0 — cổng phân bổ tài nguyên (một chiều, không dừng nghiên cứu)
+    delta1: null             # H1: ΔV_D(K_main) ≥ δ₁
+    delta2: null             # H2: V_rev − V_nbr ≥ δ₂
+    delta3: null             # H3: giảm L_D(μ) so với SPI baseline và IG ≥ δ₃
+    rho_min_vindep: 1.0e-4   # chỉ báo ρ̂ khi V̂_indep(1) vượt ngưỡng (tránh 0/0)
+    alpha: 0.05
+    bootstrap: 10000
+    seed: 23
+    n_flip: 2000             # C1c: số lần lật dấu
+    floor_grids: [14]        # sàn patch trong E1/E2 (E0 dùng e0.grids)
+    floor_lams: [0.0, 1.0e-3, 1.0e-2, 1.0e-1]
+    floor_folds: 4
+    quad_probe: 2            # số đường đầu mỗi cấu hình đo thêm sai số chiếu so với mid(M·factor)
+    quad_probe_factor: 4
+  D:
+    primary: del_sq
+    n_sel: 512               # bộ ô CHỌN (E1b dev) / fit sàn
+    n_eval: 512              # bộ ô ĐÁNH GIÁ độc lập
+    sets:
+      del_sq:      {kind: deletion, shape: square, sizes: [16, 32, 56], bg: black}     # = D của PATHSCORE (quần thể)
+      ins_sq:      {kind: insertion, shape: square, sizes: [16, 32, 56], bg: black}
+      sym_sq:      {kind: symmetric, shape: square, sizes: [16, 32, 56], bg: black}
+      frac25:      {kind: fraction, c: 0.25, shape: square, sizes: [16, 32, 56], bg: black}
+      frac50:      {kind: fraction, c: 0.5, shape: square, sizes: [16, 32, 56], bg: black}
+      frac75:      {kind: fraction, c: 0.75, shape: square, sizes: [16, 32, 56], bg: black}
+      del_sq_blur: {kind: deletion, shape: square, sizes: [16, 32, 56], bg: blur}      # dự đoán chỉ thị (xem infid_core)
+      del_sp:      {kind: deletion, shape: superpixel, n_segments: [50, 100, 200], compactness: 10.0, bg: black}
+  budget: {minutes: null, enforce: true}
+  toy:
+    device: null             # null = local.device (CPU nếu không có CUDA)
+    nb: 32                   # số lô Monte Carlo (SE theo lô)
+    b: 65536                 # cặp mỗi lô
+    alphas: [1, 3, 10, 30, 100, 1000]
+    N_var_w: [2, 4, 8, 16]
+    alphas_nonml: [0.3, 1, 3, 10, 30, 100, 1000]
+    N_nonml: 16
+    b_nonml: 32768
+    large: {d: 256, graphs: [dense_pos, dense_mixed, sparse_mixed, sparse_pos, hub], S_sizes: [8, 32, 128], N: [4, 16, 64],
+            alphas: [1, 10, 100], reps: 2, nb: 8, b: 512, cov_triples: 200, coverage: true}
+    coverage: {d: 16, N: 8, alpha: 10, n_pool: 64, truth_nb: 16, truth_b: 8192, n_images: [8, 16], m: [8, 32], reps: 200,
+               bootstrap: 2000}
+  e0: {n_fit: 1536, n_eval: 512, grids: [14, 28], lams: [0.0, 1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1], folds: 4, subsets_per_K: 200,
+       K_g0: 16, allow_stale_attr: false}
+  quad: {split: pilot, offset: 0, n_images: 4, paths_per_alpha: 2, alphas: [1, 10, 100], N: 64, ig: true, ig_N: 64,
+         L_max: 4, tol_ref: 1.0e-3, tol: 1.0e-2, rand_M: [1], n_sets: 256}
+  pilot:
+    split: pilot
+    offset: 0
+    n_images: 8
+    m: 16                    # cặp rev
+    m_indep: 32              # nhánh indep nhỏ (đối chiếu phương sai suy từ cặp)
+    configs: [{family: spi, alpha: 10, N: 64}]
+  e1a:
+    split: pilot
+    offset: 0
+    n_images: 16             # cỡ mẫu tính lại từ sd của ΔV_D ở pilot (báo cáo pilot)
+    m: 32
+    configs: [{family: spi, alpha: 10, N: 64}, {family: spi, alpha: 1, N: 64}, {family: spi, alpha: 100, N: 64}]
+    coupled: {enabled: false, designs: [global, nbr], Ks: [2, 4, 8, 16], replicates: 8}   # bật sau khi C1 đạt
+  e1b:
+    dev: {split: pilot, offset: 0, n_images: 16}
+    test: {split: fresh, offset: 400, n_images: 48}
+    m: 16
+    grid: {family: [spi, patch], alpha: [1, 3, 10, 30, 100, 1000], N: [64], G: [7], eta: [0.5]}
+    baseline: {family: spi, alpha: 10, N: 64}
+    ig_N: 64
+    select_set: sel
+  e2:
+    split: fresh
+    offset: 500
+    n_images: 32
+    m: 16
+    sets: [del_sq, ins_sq, sym_sq, frac25, frac50, frac75, del_sq_blur, del_sp]
+    external: true
+    floors: true
+    extra_arch: []           # ví dụ [{arch: vit_b_16, weights: IMAGENET1K_V1, batch: 32}] nếu còn ngân sách
+    road: {fracs: [0.1, 0.3, 0.5, 0.7, 0.9], noise: 0.01, iters: 1000, tol: 1.0e-5}
+    insdel_steps: 50
+    pointing_tol: 15
+    top_frac: 0.05
+
 debug:
-  sampling: {n_images: 2, seeds: 2, K: [2, 4], insdel_steps: 10,
-             reference: {K: 8, quad_gate_paths: 2},
-             secondary: [{name: pixel, methods: [S2p, S3p, S4p]}, {name: eta05, methods: [S6, S2, S4], eta: 0.5},
-                         {name: eta1, methods: [S6, S2, S4], eta: 1.0}, {name: controls, methods: [S5, S7]}],
-             quad_check: {n_images: 1, M: [1, 2, 4]},
-             lime: {n_samples: 32}, locality: {n_null: 2}, stats: {bootstrap: 200, min_images: 2},
-             budget: {enforce: false, secondary_minutes: 1000}}
+  paths:
+    spi10:  {steps: 8}
+  metrics: {insdel: {n_steps: 10}}
+  sampling: {insdel_steps: 10, stats: {bootstrap: 200}}
   pathscore: {n_images: 2, seeds: 1, K: 4, enforce_budget: false,
               extra_metrics: {road: {fracs: [0.2, 0.5, 0.8], iters: 200}, subset: {n: 12}}}
-  e12: {split: pilot, n_images: 1, N: 8, M: 2, K: 4, levels: {dp: [1, 10]}, gate: {n_images: 1, K: 2, M: [2, 4], M_hi: 4},
-        insdel_steps: 10}
-  e11: {n_images: 1, N: 8, K: 2, paths: [ig, "dp:10", smooth, "rgb:10"], calib: {d: 2000}, mu_iter: 50, insdel_steps: 10}
-  e10: {split: pilot, n_images: 1, N: 8, M: 2, K_half: 2, gate: {n_images: 1, paths: 1, M_hi: 4}, calib: {d: 2000},
-        stats: {bootstrap: 200}}
-  ocs: {n_images: 1, M: 2, ig_steps: 16, guided_steps: 16, blur_steps: 12, spi_paths_per_half: 2, k_list: [1, 2],
-        consensus: {draws: 2, min_size: 5}, heatmap_images: 1}
-  e9: {A: {split: pilot, n_images: 1, K: 1, M: [4], ref_N: 32, ref_M: 4}, H1: {n_images: 1},
-       B: {n_images: 1, N: 8, M: 2, K: 2, q: [0, 0.5, 1], per_path_insdel: false, interaction: {grid: 4, t: [0.5]}}}
-  e8: {split: pilot, n_images: 2, N: 8, N_fine: 32, M: 2, K: 2, kinds: [indep, rgb, rand16, block4, global],
-       gate: {n_images: 1, kinds: [block4, rand16], M: 2}, stats: {bootstrap: 200},
-       hypotheses: [{id: H1, a: rgb, b: indep, metrics: [iou, insdel_blur], test: two_sided, family: primary},
-                    {id: H2, a: rand16, b: rgb, metrics: [iou], test: equivalence, margin: 0.02},
-                    {id: H3, a: block4, b: rand16, metrics: [insdel_black], test: less, family: primary},
-                    {id: H5, a: global, b: ig, metrics: [iou], test: equivalence, margin: 0.01}],
-       secondary_guided: {N: 16, M: 2, donors: 1}}
-  e7: {n_images: 1, S: {N: 8, M: 2, paths: 2, kinds: [indep, rgb, block4, rand16, global]},
-       Njump: {n_images: 1, N: 16, M: 2, paths: 1, kinds: [indep, block4]},
-       Q: {n_images: 1, N: 16, M_hi: 4, M_lo: 2, perm_seeds: 2, donors: 1}}
-  e6: {n_images: 1, A: {N: 16, M: 2, perm_seeds: 2, donors: 1, spi_paths: 2},
-       B: {N: 8, M: 2, paths: 2, kinds: [indep, rgb, block56, global]}}
-  e5: {n_images: 2, ig_steps: 16, blur_steps: 12, guided_steps: 16, spi_paths: 4, spi_perm_paths: 2, lam_paths: 2,
-       perm_kinds: [bin, block], block: 56, heatmap_images: 1, signal: {n_images: 1, locations: [inside]}}
-  cross:
-    gate: {n_images: 1, spi_paths: 3, M: [1, 2, 4], ig_steps: 16,
-           toy: {N_fine: 128, N: [16, 64], paths: 30, w_points: 512}}
-    e4: {n_images: 2, M: 2, spi_paths: 3, ig_steps: 16, guided_steps: 16, blur_steps: 12, heatmap_images: 1}
-    e4c: {n_images: 1, alphas: [100, 10, 1], paths: 2, per_path_insdel: false}
-    e4d: {n_images: 1, M: 2, ig_steps: 16, guided_steps: 16, blur_steps: 12, spi_paths: 4, k_curve: [1, 2, 4], heatmap_images: 1}
-  mechanism:
-    e1: {n_images: 1, ig_steps: 16, spi_paths: [0], M: [1, 2, 4], dp_N: [8, 32], dp_points: 128, dp_realizations: 1,
-         toy: {N_fine: 256, N: [16, 64], paths: 50}}
-    e2: {n_images: 2, paths: 4, ig_steps: 16, K_checkpoints: [1, 2, 4], per_path_insdel: false, heatmap_images: 1}
-    e3: {n_images: 1, rho: [0.03, 0.3], u_low_at: null}
-  paths:
-    ig:     {steps: 16}
-    spi10:  {steps: 8, paths: 4, k_group: 2}
-    guided: {steps: 16}
-    blur:   {steps: 12}
-  convergence: {n_images: 1, N: [8, 16, 32], spi_realizations: 2}
-  exp_a: {n_images: 2, diag_step_images: 1, heatmap_images: 1}
-  exp_c: {n_images: 1, sizes: [2, 24], scatter_signs: [1]}
-  exp_b: {n_images: 1, rho: [0.03, 0.3], eta: [1.0], u_low_at_ref: false, noise_samples: 4, n_other: 1}
-  metrics: {insdel: {n_steps: 10}}
+  infid:
+    protocol: {K_main: 4, bootstrap: 200, n_flip: 99, floor_lams: [0.0, 1.0e-2], floor_folds: 2, quad_probe: 1}
+    D: {n_sel: 64, n_eval: 64, sets: {del_sp: {n_segments: [20, 40]}}}
+    toy: {nb: 4, b: 4096, alphas: [1, 10], N_var_w: [2, 4], alphas_nonml: [1, 100], b_nonml: 2048,
+          large: {d: 32, graphs: [dense_mixed, hub], S_sizes: [4], N: [4, 16], alphas: [1, 10], reps: 1, nb: 3, b: 128,
+                  cov_triples: 20},
+          coverage: {n_pool: 8, truth_nb: 2, truth_b: 1024, n_images: [4], m: [8], reps: 10, bootstrap: 200}}
+    e0: {n_fit: 128, n_eval: 64, grids: [14], lams: [0.0, 1.0e-2], folds: 2, subsets_per_K: 10}
+    quad: {n_images: 1, paths_per_alpha: 1, alphas: [10], N: 8, ig_N: 8, L_max: 2, n_sets: 32}
+    pilot: {n_images: 2, m: 3, m_indep: 4, configs: [{family: spi, alpha: 10, N: 8}]}
+    e1a: {n_images: 2, m: 3, configs: [{family: spi, alpha: 10, N: 8}],
+          coupled: {enabled: true, designs: [nbr], Ks: [2], replicates: 2}}
+    e1b: {dev: {n_images: 2}, test: {split: pilot, offset: 4, n_images: 2}, m: 2,
+          grid: {family: [spi, patch], alpha: [1, 10], N: [8], G: [7]}, baseline: {family: spi, alpha: 10, N: 8}, ig_N: 8}
+    e2: {split: pilot, offset: 8, n_images: 1, m: 2, sets: [del_sq, ins_sq, frac50, del_sq_blur, del_sp], insdel_steps: 10,
+         road: {fracs: [0.2, 0.8], iters: 200}}
 
 # ─────────────────────────────────────────────────────────────────────────────
 local:

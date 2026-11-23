@@ -1,8 +1,6 @@
-"""Mô hình, hàm mục tiêu f(x) = logit_c(x) + các thành phần cài thêm (bẫy H, tín hiệu S), khởi tạo lại theo tầng."""
+"""Mô hình (torchvision, đóng băng) và hàm mục tiêu f(x) = logit lớp đích."""
 
 from __future__ import annotations
-
-import copy
 
 import torch
 import torch.nn as nn
@@ -42,27 +40,3 @@ class TargetFn:
         for e in self.extras:
             out = out + e(x)
         return out
-
-
-class ProbFn(nn.Module):
-    """Xác suất softmax lớp đích (cho insertion/deletion, ROAD)."""
-
-    def __init__(self, backbone: nn.Module, cls: int):
-        super().__init__()
-        self.backbone, self.cls = backbone, int(cls)
-
-    def forward(self, x):
-        return torch.softmax(self.backbone(x), dim=-1)[:, self.cls]
-
-
-def randomized(backbone: nn.Module, layers: list[str], seed: int) -> nn.Module:
-    """Bản sao với các tầng `layers` được khởi tạo lại (sanity check kiểu Adebayo et al., tích luỹ)."""
-    m = copy.deepcopy(backbone)
-    torch.manual_seed(seed)
-    for name in layers:
-        for sub in getattr(m, name).modules():
-            if hasattr(sub, "reset_parameters"):
-                sub.reset_parameters()
-            if hasattr(sub, "reset_running_stats"):
-                sub.reset_running_stats()
-    return freeze(m, next(backbone.parameters()).device)

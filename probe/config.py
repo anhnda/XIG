@@ -1,18 +1,13 @@
-"""Đọc config, chế độ debug, khoá cho bước xác nhận, seed theo hash."""
+"""Đọc config, chế độ debug, seed theo hash. Mỗi thí nghiệm tự băm phần config của nó để quản lý cache."""
 
 from __future__ import annotations
 
 import copy
-import datetime as _dt
 import hashlib
-import json
 import os
 
 import torch
 import yaml
-
-UNHASHED = ("local", "debug", "mechanism", "cross", "e5", "e6", "e7", "e8", "e9", "ocs", "e10", "e11", "e12",
-            "sampling", "pathscore")    # các mục có hash riêng (mechanism.py, …, sampling_benchmark.py), không làm mất cache pilot
 
 
 def _merge(base: dict, over: dict) -> dict:
@@ -34,32 +29,6 @@ def load(path: str, debug: bool = False) -> dict:
         cfg = _merge(cfg, cfg.get("debug", {}) or {})
         cfg["_debug"] = True
     return cfg
-
-
-def digest(cfg: dict) -> str:
-    part = {k: v for k, v in cfg.items() if k not in UNHASHED and not k.startswith("_")}
-    return hashlib.sha256(json.dumps(part, sort_keys=True, default=str).encode()).hexdigest()
-
-
-def write_lock(cfg: dict, reason: str = "") -> None:
-    p = cfg["_path"] + ".lock"
-    rec = {"sha256": digest(cfg), "time": _dt.datetime.now().isoformat(timespec="seconds"), "reason": reason}
-    if os.path.exists(p):
-        with open(p) as fh:
-            rec["previous"] = json.load(fh)
-    with open(p, "w") as fh:
-        json.dump(rec, fh, indent=1)
-    print(f"[lock] {p}: {rec['sha256'][:16]}")
-
-
-def require_lock(cfg: dict) -> None:
-    p = cfg["_path"] + ".lock"
-    if not os.path.exists(p):
-        raise SystemExit("--split confirm cần khoá config trước: python -m probe lock --reason '...'")
-    with open(p) as fh:
-        h = json.load(fh)["sha256"]
-    if h != digest(cfg):
-        raise SystemExit("config đã sửa sau khi khoá; bước xác nhận phải dùng đúng config đã khoá")
 
 
 def out_dir(cfg: dict, split: str) -> str:

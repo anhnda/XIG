@@ -1,49 +1,24 @@
 """
 python -m probe [--config config.yaml] [--debug] [--device cuda] <lệnh>
 
-  estimate  đo tốc độ GPU, in ước tính thời gian conv/main (không chạy thí nghiệm)
-  conv      P0: hội tụ theo N (left/mid/rand, IDGI các biến thể)
-  main      P1 + P2 + P3 trong một lượt mỗi ảnh
-  report    đồ thị + ATTR_PROBE_PILOT_REPORT.md từ các CSV đã có
-  all       conv → main → report
-  mech-e1      E1: kiểm định số học của phân rã (đường cố định, gộp bước nhảy DP, toy)
-  mech-e23     E2 + E3: phân rã cơ chế trên ResNet (SPI K đường, IG) và trên bẫy H
-  mech-report  MECHANISM_REPORT.md + đồ thị từ CSV đã có
-  mech         mech-e1 → mech-e23 → mech-report
-  cross-gate   E1′: between do nhiễu cầu phương (M lồng nhau) + toy bậc hai/bậc năm
-  cross-e4     E4a+b: IG, SPI, Guided IG, BlurIG cùng thước đo exposure (mode, trạng thái, IDGI)
-  cross-e4c    E4c: quét mức lệch nhịp (SPI α)
-  cross-e4d    E4d: hội tụ heatmap đầu ra giữa các phương pháp (tương quan thứ hạng, trần độ tin cậy, SPI theo K)
-  cross-report CROSS_REPORT.md + đồ thị từ CSV đã có
-  cross        cross-gate → cross-e4 → cross-e4c → cross-report
-  e5           E5: residual avoidance, hoán vị lịch trình Guided, đường λ, tín hiệu → E5_REPORT.md
-  e5-report    E5_REPORT.md + đồ thị từ CSV đã có
-  e6           E6: A (cô lập gradient guidance, K=1) + B (topology chia sẻ lịch trình) → E6_REPORT.md
-  e6-report    E6_REPORT.md + đồ thị từ CSV đã có
-  e7           E7: nhóm đồng bộ cùng cỡ (block vs random), độ bền theo N, Guided ở cầu phương dày → E7_REPORT.md
-  e7-report    E7_REPORT.md + đồ thị từ CSV đã có
-  e8           E8: xác nhận held-out các phép so đã tiền đăng ký (split confirm, 50 ảnh) → E8_REPORT.md
-  e8-report    E8_REPORT.md + đồ thị từ CSV đã có
-  e9           E9: bất biến global≡IG (A1), H1 với nhiều eval (A2), quét ghép kênh RGB q + tương tác (B) → E9_REPORT.md
-  e9-report    E9_REPORT.md + đồ thị từ CSV đã có
-  ocs          Output Convergence Study: hội tụ heatmap IG/SPI/Guided/BlurIG (4 tầng), within vs cross, consensus → OCS_REPORT.md
-  ocs-report   OCS_REPORT.md từ CSV đã có
-  e10          E10: Random Path Family Ablation (IG, DP, smooth warp, logistic-normal; khớp mức exploration) → E10_REPORT.md
-  e10-report   E10_REPORT.md từ CSV đã có
-  e11          E11: LIG chỉ Phase 1 (tối ưu μ) trên mẫu đường SPI và biến thể cho trước → E11_REPORT.md
-  e11-report   E11_REPORT.md từ CSV đã có
-  e12          E12: R_nl (phản ứng phi tuyến của mô hình trên đường) có dự đoán over-exploration gây hại? → E12_REPORT.md
-  e12-report   E12_REPORT.md từ CSV đã có
-  sampling           P4: Real-CNN Stochastic Path Sampling Benchmark (ref → primary → khối phụ trong ngân sách)
-                     → <out>/pilot/sampling/*.csv + <out>/pilot/ATTR_PROBE_SAMPLING_REPORT.md
-  sampling-estimate  P4: đo GPU, in ước tính phút từng khối và kế hoạch theo ngân sách (không chạy thí nghiệm)
-  sampling-report    P4: dựng lại thống kê, đồ thị, báo cáo từ CSV đã có (không chạy mô hình)
-  sampling-quad      P4-C: cùng tập đường, cầu phương M ∈ quad_check.M trên vài ảnh → sampling_quad.csv + mục C của báo cáo
-  pathscore          eval riêng: InsDel của TỪNG đường SPI, đánh giá chéo nền mask blur/black/white/grey/mean
-                     → <out>/pilot/pathscore/ + <out>/pilot/ATTR_PROBE_PATHSCORE_REPORT.md
-  pathscore-report   dựng lại báo cáo pathscore từ CSV (không chạy mô hình)
-
-Kết quả: <local.out>[_debug]/pilot/. Chạy lại sẽ bỏ qua ảnh đã có trong cache (cùng hash config).
+Proposal "Lấy mẫu đường SPI theo infidelity" (mục infid:, kết quả <out>/pilot/infid/):
+  toy                      E-toy nhỏ: oracle Phụ lục + hàm không đa tuyến (không cần mô hình) → infid/toy/TOY_REPORT.md
+  toy-large                E-toy lớn d = 256: dấu V_o − V_e so với T9, Cov(H_ij, H_ik), coverage CI tỷ số
+  toy-report               dựng lại TOY_REPORT.md
+  pathscore                (đầu vào E0) bản đồ từng đường SPI + điểm → <out>/pilot/pathscore/ + ATTR_PROBE_PATHSCORE_REPORT.md
+  pathscore-report         dựng lại báo cáo PATHSCORE từ CSV
+  pathscore-infid-decomp   E0: audit PATHSCORE từ attr.pt (không gradient mới) → infid/e0/INFID_E0_REPORT.md
+  pathscore-infid-report   dựng lại báo cáo E0
+  quad-check               E-quadrature (C3): lưới lồng nhau N → 2N → … tới tolerance → infid/quad/INFID_QUAD_REPORT.md
+  quad-check-report        dựng lại báo cáo E-quadrature
+  sampling-infid-pilot     E1a pilot (cặp rev + nhánh indep nhỏ; C1c, C2, chọn m)
+  infid-lock               khoá protocol (K chính, δ, quy tắc tích phân, D, cấu hình E1/E2) → infid/infid_prereg.json
+  sampling-infid-e1a       E1a chính (chỉ cặp rev; tuỳ chọn global/nbr) — cần khoá
+  sampling-infid-e1b-dev   E1b trên ảnh dev + bộ ô chọn → chọn cấu hình (e1b_selection.json) — cần khoá
+  sampling-infid-e1b-test  E1b trên ảnh test + bộ ô đánh giá độc lập (H3) — cần khoá
+  sampling-infid-e2        E2 kiểm định ngoài mẫu (nhiều D, metric ngoài, tuỳ chọn ViT) — cần khoá
+  sampling-infid-report    dựng lại infid/INFID_SAMPLING_REPORT.md từ CSV
+Chạy lại sẽ bỏ qua phần đã có trong cache (cùng hash config).
 """
 
 from __future__ import annotations
@@ -52,163 +27,52 @@ import argparse
 
 from . import config as C
 
+CMDS = ["toy", "toy-large", "toy-report", "pathscore", "pathscore-report", "pathscore-infid-decomp", "pathscore-infid-report",
+        "quad-check", "quad-check-report", "sampling-infid-pilot", "infid-lock", "sampling-infid-e1a", "sampling-infid-e1b-dev",
+        "sampling-infid-e1b-test", "sampling-infid-e2", "sampling-infid-report"]
+
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="probe", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--debug", action="store_true", help="ghi đè bằng mục debug: (ít ảnh, ít bước); ghi vào <out>_debug")
     ap.add_argument("--device", default=None)
-    ap.add_argument("cmd", choices=["estimate", "conv", "main", "report", "all",
-                                    "mech-e1", "mech-e23", "mech-report", "mech",
-                                    "cross-gate", "cross-e4", "cross-e4c", "cross-e4d", "cross-report", "cross", "e5", "e5-report",
-                                    "e6", "e6-report", "e7", "e7-report",
-                                    "e8", "e8-report", "e9", "e9-report",
-                                    "ocs", "ocs-report", "e10", "e10-report",
-                                    "e11", "e11-report", "e12", "e12-report",
-                                    "sampling", "sampling-estimate", "sampling-report", "sampling-quad",
-                                    "pathscore", "pathscore-report"])
+    ap.add_argument("cmd", choices=CMDS)
     args = ap.parse_args(argv)
     cfg = C.load(args.config, debug=args.debug)
+    cmd = args.cmd
 
-    if args.cmd.startswith("sampling"):
-        from . import sampling_benchmark as SB
-        from .sampling_report import write as wsr
-        if args.cmd in ("sampling", "sampling-estimate"):
-            from .pilot import Ctx
-            SB.run(Ctx(cfg, args.device), estimate_only=args.cmd == "sampling-estimate")
-        if args.cmd == "sampling-quad":
-            from .pilot import Ctx
-            SB.run_quad(Ctx(cfg, args.device))
-        if args.cmd != "sampling-estimate":
-            wsr(SB.sampling_out(cfg), cfg)
-        return
+    def ctx():
+        from .ctx import Ctx
+        return Ctx(cfg, args.device)
 
-    if args.cmd.startswith("pathscore"):
+    if cmd.startswith("toy"):
+        from . import toy_spi as TS
+        {"toy": TS.run_small, "toy-large": TS.run_large, "toy-report": TS.write_report}[cmd](cfg)
+    elif cmd.startswith("pathscore-infid"):
+        from . import infid_e0 as E0
+        if cmd == "pathscore-infid-decomp":
+            E0.run(ctx())
+        E0.write_report(cfg)
+    elif cmd.startswith("pathscore"):
         from . import pathscore as PS
-        if args.cmd == "pathscore":
-            from .pilot import Ctx
-            PS.run(Ctx(cfg, args.device))
+        if cmd == "pathscore":
+            PS.run(ctx())
         PS.write_report(cfg)
-        return
-
-    if args.cmd == "report":
-        from .report import write
-        write(C.out_dir(cfg, "pilot"), cfg)
-        return
-    if args.cmd.startswith("e12"):
-        from . import e12 as E12
-        from .e12_report import write as w12
-        if args.cmd == "e12":
-            from .pilot import Ctx
-            E12.run(Ctx(cfg, args.device))
-        w12(E12.e12_out(cfg), cfg)
-        return
-    if args.cmd.startswith("e11"):
-        from . import e11 as E11
-        from .e11_report import write as w11
-        if args.cmd == "e11":
-            from .pilot import Ctx
-            E11.run(Ctx(cfg, args.device))
-        w11(E11.e11_out(cfg), cfg)
-        return
-    if args.cmd.startswith("e10"):
-        from . import e10 as E10
-        from .e10_report import write as w10
-        if args.cmd == "e10":
-            from .pilot import Ctx
-            E10.run(Ctx(cfg, args.device))
-        w10(E10.e10_out(cfg), cfg)
-        return
-    if args.cmd.startswith("ocs"):
-        from . import ocs as O
-        from .ocs_report import write as wo
-        if args.cmd == "ocs":
-            from .pilot import Ctx
-            O.run(Ctx(cfg, args.device))
-        wo(O.ocs_out(cfg), cfg)
-        return
-    if args.cmd.startswith("e9"):
-        from . import e9 as E9
-        from .e9_report import write as w9
-        if args.cmd == "e9":
-            from .pilot import Ctx
-            E9.run(Ctx(cfg, args.device))
-        w9(E9.e9_out(cfg), cfg)
-        return
-    if args.cmd.startswith("e8"):
-        from . import e8 as E8
-        from .e8_report import write as w8
-        if args.cmd == "e8":
-            from .pilot import Ctx
-            E8.run(Ctx(cfg, args.device))
-        w8(E8.e8_out(cfg), cfg)
-        return
-    if args.cmd.startswith("e7"):
-        from . import e7 as E7
-        from .e7_report import write as w7
-        if args.cmd == "e7":
-            from .pilot import Ctx
-            E7.run(Ctx(cfg, args.device))
-        w7(E7.e7_out(cfg), cfg)
-        return
-    if args.cmd.startswith("e6"):
-        from . import e6 as E6
-        from .e6_report import write as w6
-        if args.cmd == "e6":
-            from .pilot import Ctx
-            E6.run(Ctx(cfg, args.device))
-        w6(E6.e6_out(cfg), cfg)
-        return
-    if args.cmd.startswith("e5"):
-        from . import e5 as E5
-        from .e5_report import write as ewrite
-        if args.cmd == "e5":
-            from .pilot import Ctx
-            E5.run(Ctx(cfg, args.device))
-        ewrite(E5.e5_out(cfg), cfg)
-        return
-    if args.cmd.startswith("cross"):
-        from . import cross as X
-        from .cross_report import write as cwrite
-        if args.cmd != "cross-report":
-            from .pilot import Ctx
-            ctx = Ctx(cfg, args.device)
-            for st in ("gate", "e4", "e4c", "e4d"):
-                if args.cmd in (f"cross-{st}", "cross"):
-                    X.run(ctx, st)
-        cwrite(X.cross_out(cfg), cfg)
-        return
-    if args.cmd.startswith("mech"):
-        from . import mechanism as Mx
-        from .mech_report import write as mwrite
-        if args.cmd != "mech-report":
-            from .pilot import Ctx
-            ctx = Ctx(cfg, args.device)
-            if args.cmd in ("mech-e1", "mech"):
-                Mx.run(ctx, "e1")
-            if args.cmd in ("mech-e23", "mech"):
-                Mx.run(ctx, "e23")
-        mwrite(Mx.mech_out(cfg), cfg)
-        return
-
-    from . import pilot as P
-    ctx = P.Ctx(cfg, args.device)
-    if args.cmd == "estimate":
-        b = P.bench(ctx)
-        e = P.estimate(cfg, b)
-        print(f"{b['per_eval'] * 1e3:.2f} ms/eval (lô {ctx.batch}), {b['per_seq'] * 1e3:.1f} ms/bước Guided")
-        print(f"conv ≈ {e['conv_min']:.1f} phút ({cfg['convergence']['n_images']} ảnh)")
-        print(f"main ≈ {e['main_min']:.1f} phút ({cfg['exp_a']['n_images']} ảnh A; tín hiệu {e['n_signal_variants']} biến thể × "
-              f"{cfg['exp_c']['n_images']} ảnh; bẫy {e['n_trap_variants']} biến thể × {cfg['exp_b']['n_images']} ảnh)")
-        print(f"mỗi ảnh A: {e['evals_per_image_A']} eval theo lô + {e['seq_per_image_A']} eval tuần tự")
-        print({k: (v if isinstance(v, int) else len(v)) for k, v in ctx.sp.items()})
-        return
-    if args.cmd in ("conv", "all"):
-        P.run_stage(ctx, "conv")
-    if args.cmd in ("main", "all"):
-        P.run_stage(ctx, "main")
-    from .report import write
-    write(ctx.out, cfg)
+    elif cmd.startswith("quad-check"):
+        from . import infid_quad as IQ
+        if cmd == "quad-check":
+            IQ.run(ctx())
+        IQ.write_report(cfg)
+    elif cmd == "infid-lock":
+        from . import sampling_infid as SI
+        SI.lock(cfg)
+    elif cmd == "sampling-infid-report":
+        from . import sampling_infid as SI
+        SI.write_report(cfg)
+    else:
+        from . import sampling_infid as SI
+        SI.run(ctx(), cmd[len("sampling-infid-"):])
 
 
 if __name__ == "__main__":

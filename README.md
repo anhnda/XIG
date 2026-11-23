@@ -1,80 +1,44 @@
-# attr_probe — Attribution Mechanism Pilot
+# attr_probe — Lấy mẫu đường SPI theo infidelity (intra-path & inter-path, protocol v1.0)
 
-Pilot kiểm cơ chế attribution theo task P0–P3. Không train gì. ResNet-50 `IMAGENET1K_V2`, logit lớp dự đoán,
-baseline đen, cùng tiền xử lý và cách chia ảnh như các đợt trước.
-Đầu ra cuối: `runs_probe/pilot/ATTR_PROBE_PILOT_REPORT.md` (tự sinh, kèm CSV và PNG).
+ResNet-50 `IMAGENET1K_V2`, logit lớp dự đoán, baseline đen, ImageNet-Segmentation (cùng tiền xử lý / chia ảnh như các đợt trước).
+Cấu hình: `config.yaml` (mục `infid:`; `pathscore:` + `sampling:` cho đầu vào E0). Kết quả: `runs_probe/pilot/infid/`.
+Audit P0: `docs/P0_AUDIT.md` — quy tắc tích phân của cache PATHSCORE là `canon_rand`, không phải điểm trái.
 
 ## Chạy
 
 ```bash
 pip install -r requirements.txt
 # sửa local: trong config.yaml (đường dẫn gtsegs_ijcv.mat, các file index cũ)
-bash scripts/run.sh test       # CPU, vài giây → tests_report.txt
-bash scripts/run.sh debug      # 1–2 ảnh, ít bước, toàn pipeline → runs_probe_debug/pilot/ATTR_PROBE_PILOT_REPORT.md
-bash scripts/run.sh estimate   # đo GPU, in ước tính phút cho conv và main
-bash scripts/run.sh pilot      # conv → main → report  → runs_probe/pilot/ATTR_PROBE_PILOT_REPORT.md
+bash scripts/run.sh test                     # P0: unit test C1a/C1b, quy tắc tích phân, T10, D, sàn (CPU)
+bash scripts/run.sh toy                      # E-toy nhỏ: oracle Phụ lục → infid/toy/TOY_REPORT.md
+bash scripts/run.sh toy-large                # E-toy lớn d = 256 (T9, Cov(H), coverage CI tỷ số)
+bash scripts/run.sh pathscore                # (nếu chưa có cache) bản đồ từng đường SPI → pilot/pathscore/
+bash scripts/run.sh pathscore-infid-decomp   # E0: từ attr.pt, không gradient mới → infid/e0/INFID_E0_REPORT.md (G0)
+bash scripts/run.sh quad-check               # E-quadrature / C3 → infid/quad/INFID_QUAD_REPORT.md
+bash scripts/run.sh sampling-infid-pilot     # E1a pilot (cặp rev + indep nhỏ; C1c, C2, chọn m)
+#   → điền infid.protocol.{K_main, delta1, delta2, delta3, rule, M} (delta0 nếu muốn quyết định G0), sửa e1a.m / n_images
+bash scripts/run.sh infid-lock               # khoá protocol → infid/infid_prereg.json (các bước sau kiểm hash)
+bash scripts/run.sh sampling-infid-e1a       # E1a chính: H1 (+ H2 khi bật infid.e1a.coupled sau khi C1 đạt)
+bash scripts/run.sh sampling-infid-e1b-dev   # E1b dev: chọn cấu hình → infid/e1b_selection.json (không ghi đè)
+bash scripts/run.sh sampling-infid-e1b-test  # E1b test: H3
+bash scripts/run.sh sampling-infid-e2        # E2: nhiều D, metric ngoài, (tuỳ chọn) ViT
 ```
 
-Bị ngắt thì chạy lại cùng lệnh: ảnh đã xong (cùng hash config) được bỏ qua. `bash scripts/run.sh report` dựng
-lại đồ thị + báo cáo từ CSV mà không chạy GPU.
-
-## P4 — Real-CNN Stochastic Path Sampling Benchmark
-
-```bash
-bash scripts/run.sh sampling-test      # unit test P4 + test cũ (CPU) → runs_probe/pilot/sampling/tests_report.txt
-bash scripts/run.sh sampling-debug     # 2 ảnh, N = 8, K ∈ {2,4} → runs_probe_debug/pilot/ATTR_PROBE_SAMPLING_REPORT.md
-bash scripts/run.sh sampling-estimate  # đo GPU, in phút từng khối + kế hoạch theo sampling.budget (không chạy)
-bash scripts/run.sh sampling-pilot     # ref → primary → khối phụ trong ngân sách → runs_probe/pilot/ATTR_PROBE_SAMPLING_REPORT.md
-bash scripts/run.sh sampling-report    # dựng lại thống kê/đồ thị/báo cáo từ CSV (DEBUG=1 cho thư mục debug)
-bash scripts/run.sh sampling-quad      # C: cùng tập đường, M ∈ quad_check.M trên vài ảnh (chạy trước khi tăng số ảnh)
-```
-
-Thí nghiệm theo sau: A = khối `pixel` (S2p/S3p/S4p: cân bằng giữa các đường, mỗi phần tử lịch riêng, đúng q_SPI);
-B = khối `eta025/eta05/eta075/eta1` (quét η, đối chứng S6 cùng η); C = `sampling-quad`. Báo cáo có mục A, B, C riêng.
-
-Cấu hình ở mục `sampling:` của `config.yaml` (hash riêng theo khối, không làm mất cache P0–P3). Sampler: `probe/sampling.py`;
-runner: `probe/sampling_benchmark.py`; thống kê + báo cáo: `probe/sampling_report.py`; test: `tests/test_sampling.py`.
-Bị ngắt thì chạy lại cùng lệnh: (ảnh × khối × seed) đã xong được bỏ qua. Nếu ước tính phần chính vượt
-`sampling.budget.minutes × slack` thì chương trình dừng trước khi chạy (đặt `budget.enforce: false` để bỏ qua).
-
-## PATHSCORE — eval riêng: InsDel của từng đường SPI, đánh giá chéo nền mask
-
-```bash
-bash scripts/run.sh pathscore          # → runs_probe/pilot/pathscore/ + runs_probe/pilot/ATTR_PROBE_PATHSCORE_REPORT.md
-bash scripts/run.sh pathscore-debug    # bản debug
-bash scripts/run.sh pathscore-report   # dựng lại báo cáo từ CSV
-```
-
-Cấu hình ở mục `pathscore:` (hash riêng; tách khỏi P4). Module: `probe/pathscore.py`; test: `tests/test_pathscore.py`.
-
-Metric bổ sung bên cạnh InsDel (`pathscore.extra_metrics`, cài trong `probe/pathscore_metrics.py`), tính cho từng đường và cho SPI:
-- định vị theo mask GT (không tốn forward): `iou`, `mass_in_mask`, `energy_mask`, `pointing` (nới 15 px), `prec_top`, `auroc_mask`, `ap_mask`;
-- faithfulness: `road` / `road_morf` / `road_lerf` (ROAD, nội suy tuyến tính có nhiễu, giải bằng PCG), `sens_n` (sensitivity-n),
-  `infid` (infidelity chuẩn hoá, nhiễu = xoá ô vuông về baseline đen).
-
-Metric "nhỏ = tốt" (`road_morf`, `infid`) được đổi dấu trong mọi phân tích chéo; metric khác đơn vị được so bằng đơn vị z
-(chia cho sd giữa các đường trong ảnh). Đổi `extra_metrics` chỉ tính lại `scores.pt` (forward), bản đồ `attr.pt` giữ nguyên;
-`pathscore.report_extra` chọn metric đưa vào báo cáo mà không đụng cache. Sau khi cập nhật code này phải chạy lại
-`bash scripts/run.sh pathscore` (scores cũ không có metric mới nên tự bị tính lại), rồi mới `pathscore-report`.
+Mỗi lệnh có bản `-debug` (vd. `sampling-infid-pilot-debug`) và lệnh `*-report` dựng lại báo cáo từ CSV. Bị ngắt thì chạy
+lại cùng lệnh: phần đã xong (cùng hash) được bỏ qua.
 
 ## Cấu trúc
 
 | file | nội dung |
 |---|---|
-| `probe/paths.py` | Sinh nút: IG (thẳng), SPI (Dirichlet log-space, coupling giữa lưới bằng cộng gộp số gia), BlurIG (điểm đầu mờ), Guided IG (thuật toán tham chiếu PAIR `saliency`) |
-| `probe/quad.py` | Đánh giá mạng tại nút + điểm cầu phương; quy tắc `canon_left/mid/rand`, `idgi`, `idgi_raw`, `idgi_rand`; bỏ bước ‖g‖²≈0 minh bạch; chẩn đoán IDGI q_k(M), P_M, entropy, top-1%; `shift`/`unshift` áp thành phần cộng thêm lên đánh giá đã có |
-| `probe/components.py` | Tín hiệu S = a·Σ_R(x−x′); bẫy H (∇H bằng autograd), κ theo η, dự đoán a(ρ) cho SPI |
-| `probe/pilot.py` | Stage `conv` (P0) và `main` (P1+P2+P3 một lượt/ảnh), cache theo ảnh, ước tính chi phí |
-| `probe/metrics.py` | IoU, năng lượng trong mask (khử nhiễu MC), insertion/deletion (blur, đen), cosine, Spearman, top-k |
-| `probe/plots.py`, `probe/report.py` | Đồ thị, báo cáo mục A–G + 5 câu hỏi, phán quyết theo luật cố định |
-| `tests/test_units.py` | Test A–D của task; bẫy (autograd, η, công thức ΔA_IG); tín hiệu; coupling DP; IDGI ‖g‖=0; Guided/BlurIG trên CNN nhỏ |
-
-## Thiết kế chính
-
-- **Một lượt mạng cho mọi biến thể.** Với IG, SPI, BlurIG (đường không phụ thuộc mô hình), F+S và F+H được áp
-  giải tích lên chính f, ∇f đã tính: cùng nút, cùng U_k. Hiệu A(F+c) − A(F) không mang nhiễu MC của đường.
-  Guided IG chạy lại cho từng biến thể (cùng U_k), và được phân rã thành phần thành phần/phần đổi đường.
-- **Estimator.** `canon_rand` không chệch với tích phân trên đoạn nội suy giữa các nút; đó là canonical chính.
-  `canon_left` (bản cũ) vẫn báo để so. Ba biến thể IDGI có tên riêng, không tự rơi sang biến thể khác.
-- **Ngân sách.** Mặc định ≈ 15–25 phút trên một GPU lớp A100 (lệnh `estimate` in số đo thật trước khi chạy).
-  Phần đắt nhất: SPI 32 đường × 129 eval × 16 ảnh, và Guided IG chạy tuần tự cho 17 biến thể × 6 ảnh.
+| `probe/pathquad.py` | quy tắc tích phân `rand` (cũ) / `left` / `mid` / `theta` / `gl`; lưới lồng nhau cho E-quadrature |
+| `probe/sampling.py` | lịch trình `spi`, `patch`, `pix`, `hier`; phép đảo `rev`; thiết kế pha `indep` / `fixed` / `global` / `nbr`; InsDel |
+| `probe/infid_core.py` | D (xoá / chèn / đối xứng / phân số, nền đen / blur, ô vuông / superpixel), ΔF, phép chiếu, bộ ước lượng chỉ dùng cặp (T10), sign-flip, sàn L*_free / L*_comp |
+| `probe/infid_stats.py` | bootstrap theo ảnh, quy tắc quyết định, G0, cỡ mẫu, chọn m, khoá protocol |
+| `probe/toy_spi.py` | E-toy nhỏ / lớn, coverage |
+| `probe/infid_e0.py` | E0 (`pathscore-infid-decomp`) |
+| `probe/infid_quad.py` | E-quadrature (`quad-check`) |
+| `probe/sampling_infid.py` | E1a pilot / chính, E1b dev / test, E2, `infid-lock`, báo cáo quyết định H1–H4 |
+| `probe/pathscore.py`, `probe/pathscore_metrics.py`, `probe/pathbank.py` | PATHSCORE (đầu vào E0): bản đồ từng đường SPI (khoá ngẫu nhiên của P4 giữ nguyên) và metric |
+| `probe/ctx.py`, `config.py`, `data.py`, `model.py`, `metrics.py`, `paths.py`, `quad.py`, `report.py`, `plots.py` | nền: ngữ cảnh / dữ liệu / mô hình / sampler Dirichlet / gradient theo lô / bảng |
+| `tests/test_infid.py`, `tests/test_pathscore.py` | unit test (CPU) |
