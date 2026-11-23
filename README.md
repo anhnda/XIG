@@ -5,6 +5,8 @@ Cấu hình: `config.yaml` (mục `infid:`; `pathscore:` + `sampling:` cho đầ
 Audit P0: `docs/P0_AUDIT.md` — quy tắc tích phân của cache PATHSCORE là `canon_rand`, không phải điểm trái.
 Sửa đổi protocol 1 (sau E0 + E-quadrature): `docs/PROTOCOL_AMENDMENT_1.md` — `rand` M = 1, C3a/C3b/C3c thay yêu cầu hội tụ,
 IG không chệch, chẩn đoán làm mượt khối, K chính = 4.
+Sửa đổi protocol 2 (sau pilot): `docs/PROTOCOL_AMENDMENT_2.md` — δ₁ = 0,75, δ₃ = 2,4 (so với SPI baseline; IG là đối chứng riêng),
+E1a 32 ảnh × m = 16, E1b vòng 1 α ∈ {0,1; 0,3; 1; 10}, E0 thêm độ nhạy theo D và chẩn đoán triệt tiêu, `nbr` giới hạn ở pilot.
 
 ## Chạy
 

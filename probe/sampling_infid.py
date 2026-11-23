@@ -147,9 +147,9 @@ def attr_of(E: IC.IEnv, X: torch.Tensor, pr: dict, gkey) -> torch.Tensor:
 
 STAGE_DEFAULT = {
     "pilot": {"split": "pilot", "offset": 0, "n_images": 8, "m": 16, "m_indep": 32, "configs": [{"family": "spi", "alpha": 10, "N": 64}],
-              "sets": None, "ig": False},
+              "sets": None, "ig": False, "coupled": {"enabled": False, "designs": ["nbr"], "Ks": [4], "replicates": 8, "alphas": []}},
     "e1a": {"split": "pilot", "offset": 0, "n_images": 16, "m": 32, "configs": [{"family": "spi", "alpha": 10, "N": 64}], "sets": None,
-            "ig": False, "coupled": {"enabled": False, "designs": ["global", "nbr"], "Ks": [2, 4, 8, 16], "replicates": 8}},
+            "ig": False, "coupled": {"enabled": False, "designs": ["global", "nbr"], "Ks": [2, 4, 8, 16], "replicates": 8, "alphas": []}},
     "e1b": {"dev": {"split": "pilot", "offset": 0, "n_images": 16}, "test": {"split": "fresh", "offset": 400, "n_images": 48},
             "m": 16, "grid": {"family": ["spi", "patch"], "alpha": [1, 3, 10, 30, 100, 1000], "N": [64], "G": [7], "eta": [0.5]},
             "baseline": {"family": "spi", "alpha": 10, "N": 64}, "ig_N": 64, "ig_repeats": 8, "sets": None, "select_set": "sel"},
@@ -219,7 +219,8 @@ def lock_digest(cfg: dict) -> str:
 
 def lock(cfg: dict) -> None:
     pr = pcfg(cfg)
-    miss = [k for k in ("K_main", "delta1", "delta2", "delta3") if pr.get(k) is None]
+    need = ["K_main", "delta1", "delta3"] + (["delta2"] if (stage_cfg(cfg, "e1a").get("coupled") or {}).get("enabled") else [])
+    miss = [k for k in need if pr.get(k) is None]
     if miss:
         raise SystemExit(f"không khoá được: infid.protocol còn null: {miss} (chọn từ pilot trước khi mở tập test)")
     if int(pr["K_main"]) not in [int(k) for k in pr["Ks"]]:
@@ -298,6 +299,11 @@ def coupled_block(E: IC.IEnv, conf: dict, design: str, K: int, R: int, pr: dict,
     t0, n0 = time.time(), Counter.n
     Yr = {(nm, s): [] for nm, d in dsets.items() for s in d}
     tot = torch.zeros(E.shape, dtype=F64, device=E.x.device)
+    N = c["N"]
+    mnodes = [N // 4, N // 2, (3 * N) // 4]
+    n_el = E.shape[0] * E.shape[1] * E.shape[2]
+    msel = torch.randperm(n_el, generator=E.cgen("INFcp-marg", tag, design, name, E.image, int(K)))[:4096].to(E.x.device)
+    marg = []
     for r in range(int(R)):
         key = (tag, design, name, E.image, int(K), r)
         if c["family"] == "spi":
@@ -316,13 +322,45 @@ def coupled_block(E: IC.IEnv, conf: dict, design: str, K: int, R: int, pr: dict,
                 Z = SM.pixel_schedule(c["alpha"], c["N"], E.shape, phi[k], g)
             else:
                 Z = SM.expand_patch(SM.patch_schedule(c["alpha"], c["N"], phi[k], g), lab, E.shape)
+            if r == 0:
+                marg.append(Z[mnodes].reshape(len(mnodes), -1)[:, msel].cpu())
             A = attr_of(E, SM.nodes(E.x0, E.dx, Z), pr, (*key, k))
             Am += A / int(K)
             del Z, A
         tot += Am / int(R)
         for (nm, s), y in Yr.items():
             y.append(dsets[nm][s].project(Am)[0])
-    return {"Y": {k: torch.stack(v) for k, v in Yr.items()}, "mean": tot, "grads": Counter.n - n0, "seconds": time.time() - t0}
+    mk = marginal_check(E, c, mnodes, msel, torch.cat(marg, 1), tag, design, int(K))
+    return {"Y": {k: torch.stack(v) for k, v in Yr.items()}, "mean": tot, "grads": Counter.n - n0, "seconds": time.time() - t0, **mk}
+
+
+def ks2(a: torch.Tensor, b: torch.Tensor) -> float:
+    a, b = a.double().sort().values, b.double().sort().values
+    allv = torch.cat([a, b]).sort().values
+    Fa = torch.searchsorted(a, allv, right=True).double() / a.numel()
+    Fb = torch.searchsorted(b, allv, right=True).double() / b.numel()
+    return float((Fa - Fb).abs().max())
+
+
+def marginal_check(E, c: dict, mnodes, msel, Zd: torch.Tensor, tag, design, K: int) -> dict:
+    """Kiểm phân phối biên (trước khi tin H2): Z của thiết kế ghép tại các nút N/4, N/2, 3N/4 so với lịch trình rút độc lập cùng họ
+    (spi: spi_schedule; patch: pha iid). KS hai mẫu trên phần tử chọn ngẫu nhiên; tới hạn xấp xỉ 1,36·√(2/n) (α = 0,05, bỏ qua tương
+    quan giữa phần tử cùng đường ⇒ chỉ là sàng lọc). Không tốn gradient."""
+    ref = []
+    for k in range(int(K)):
+        g = E.gen("INFcp-ref", tag, design, cname(c), E.image, int(K), k)
+        if c["family"] == "spi":
+            Z = SM.spi_schedule(c["alpha"], c["N"], E.shape, g)
+        else:
+            phi = torch.rand(c["G"] * c["G"], generator=E.cgen("INFcp-refphi", tag, design, cname(c), E.image, int(K), k), dtype=F64)
+            Z = SM.expand_patch(SM.patch_schedule(c["alpha"], c["N"], phi, g), SM.grid_elem_labels(E.shape, c["G"]).to(E.x.device), E.shape)
+        ref.append(Z[mnodes].reshape(len(mnodes), -1)[:, msel].cpu())
+        del Z
+    Zr = torch.cat(ref, 1)
+    ks = [ks2(Zd[i], Zr[i]) for i in range(len(mnodes))]
+    n = Zd.shape[1]
+    crit = 1.36 * math.sqrt(2.0 / n)
+    return {"marg_ks_max": max(ks), "marg_ks_crit": crit, "marg_ok": max(ks) <= crit}
 
 
 def ext_metrics(E: IC.IEnv, A: torch.Tensor, sc: dict, P: dict) -> dict:
@@ -353,8 +391,15 @@ def prep_ext(E: IC.IEnv, sc: dict) -> dict:
 # một ảnh × một giai đoạn
 # ─────────────────────────────────────────────────────────────────────────────
 
+COMPUTE_KEYS = ("rule", "M", "Ks", "n_flip", "floor_grids", "floor_lams", "floor_folds", "quad_probe", "quad_probe_factor")
+NOHASH_SC = ("configs", "split", "offset", "n_images", "coupled")
+
+
 def stage_digest(cfg: dict, stage: str, sc: dict, extra=None) -> str:
-    return IC._h({"v": SI_VERSION, "stage": stage, "sc": sc, "proto": pcfg(cfg), "D": icfg(cfg)["D"], "seed": cfg["seed"],
+    """Hash cache tính toán: chỉ phần protocol ẢNH HƯỞNG kết quả (δ, K_main, … không vào ⇒ điền δ không làm mất cache)."""
+    pr = pcfg(cfg)
+    return IC._h({"v": SI_VERSION, "stage": stage, "sc": {k: v for k, v in sc.items() if k not in NOHASH_SC},
+                  "proto": {k: pr.get(k) for k in COMPUTE_KEYS}, "D": icfg(cfg)["D"], "seed": cfg["seed"],
                   "model": cfg["model"], "data": cfg["data"], "extra": extra})
 
 
@@ -391,14 +436,16 @@ def process_image(ctx, cfg: dict, stage: str, sc: dict, idx: int, out: str) -> d
     arch = cfg["model"]["arch"]
     keep_K = min(max(2, 2 * (int(pr["K_main"] or 4) // 2)), 2 * int(sc["m"])) if stage == "e2" else 0
     fit_key = "fit" if stage == "e2" else "sel"
+    pair_eval = {}
     for conf in sc["configs"]:
         nm_c = cname(conf)
         cp = os.path.join(cdir, f"{nm_c}.pt")
-        dg = stage_digest(cfg, stage, {k: v for k, v in sc.items() if k not in ("configs", "split", "offset", "n_images")}, nm_c)
+        dg = stage_digest(cfg, stage, sc, nm_c)
         if os.path.exists(cp) and torch.load(cp, weights_only=False).get("digest") == dg:
-            r = torch.load(cp, weights_only=False)["rows"]
+            obj = torch.load(cp, weights_only=False)
             for k in rows:
-                rows[k] += r.get(k, [])
+                rows[k] += obj["rows"].get(k, [])
+            pair_eval[nm_c] = obj.get("Y_eval")
             print(f"    [{stage}] {image} {nm_c}: đã có")
             continue
         E = env()
@@ -424,43 +471,65 @@ def process_image(ctx, cfg: dict, stage: str, sc: dict, idx: int, out: str) -> d
                 rr["indep"].append({**base, "dset": nm, "set": s, **st})
             rr["cost"].append({**base, "config": nm_c + "+indep", "grads": ind["grads"], "seconds": ind["seconds"],
                                "paths": int(sc["m_indep"])})
-        if stage == "e1a" and (sc.get("coupled") or {}).get("enabled") and conf["family"] in ("spi", "patch"):
-            cc = sc["coupled"]
-            for design in cc["designs"]:
-                for K in cc["Ks"]:
-                    cb = coupled_block(E, conf, design, int(K), int(cc["replicates"]), pr, dsets, stage)
-                    for (nm, s), Yr in cb["Y"].items():
-                        if s != "eval":
-                            continue
-                        ds = dsets[nm][s]
-                        d = ds.dF.to(Yr.device)
-                        den = float((d * d).sum())
-                        Vd = float(((Yr - Yr.mean(0)) ** 2).sum()) / (Yr.shape[0] - 1) / den
-                        y1, y2 = res["Y"][(nm, s)]
-                        pst = IC.pair_core(y1, y2, d, [int(K)])
-                        diff = ds.project(cb["mean"])[0] - (y1 + y2).mean(0) / 2
-                        Tm = float((diff ** 2).sum()) / den
-                        exp0 = Vd / Yr.shape[0] + pst["Ve"] / y1.shape[0]
-                        rr["coupled"].append({**base, "dset": nm, "set": s, "design": design, "K": int(K), "R": int(Yr.shape[0]),
-                                              "V_design": Vd, "V_rev": 2 * pst["Ve"] / int(K), "V_indep": pst["Vpath"] / int(K),
-                                              "rev_minus_design": 2 * pst["Ve"] / int(K) - Vd,
-                                              "indep_minus_design": pst["Vpath"] / int(K) - Vd,
-                                              "mean_eq_ratio": Tm / exp0 if exp0 > 0 else math.nan,
-                                              "grads": cb["grads"], "seconds": cb["seconds"]})
         if stage == "e2" and sc.get("external", True):
             P = prep_ext(E, sc)
             em = ext_metrics(E, res["Akeep"], sc, P)
             rr["ext"].append({**base, "estimator": f"rev_K{keep_K}", **em})
-        torch.save({"digest": dg, "rows": rr}, cp)
+        Yev = {nm: (y1.cpu(), y2.cpu()) for (nm, s_), (y1, y2) in res["Y"].items() if s_ == "eval"}
+        pair_eval[nm_c] = Yev
+        torch.save({"digest": dg, "rows": rr, "Y_eval": Yev}, cp)
         for k in rows:
             rows[k] += rr[k]
         print(f"    [{stage}] {image} {nm_c}: {res['grads']} grad, {res['seconds']:.0f}s", flush=True)
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+    # thiết kế ghép (global / nbr): cache riêng theo (cấu hình, thiết kế, K); pilot hoặc e1a; kiểm phân phối biên trước
+    cc = sc.get("coupled") or {}
+    if stage in ("pilot", "e1a") and cc.get("enabled"):
+        want = [float(a) for a in cc.get("alphas") or []]
+        for conf in sc["configs"]:
+            nm_c = cname(conf)
+            if conf["family"] not in ("spi", "patch") or (want and float(conf["alpha"]) not in want) or not pair_eval.get(nm_c):
+                continue
+            for design in cc["designs"]:
+                for K in cc["Ks"]:
+                    cpc = os.path.join(cdir, f"{nm_c}__{design}_K{int(K)}.pt")
+                    dgc = stage_digest(cfg, stage, {**sc, "cp": {"design": design, "K": int(K), "R": int(cc["replicates"])}}, nm_c)
+                    if os.path.exists(cpc) and torch.load(cpc, weights_only=False).get("digest") == dgc:
+                        rows["coupled"] += torch.load(cpc, weights_only=False)["rows"]
+                        continue
+                    E = env()
+                    if dsets is None:
+                        dsets = build_dsets(E, cfg, sc, stage)
+                    ev_only = {nm: {"eval": d["eval"]} for nm, d in dsets.items()}
+                    cb = coupled_block(E, conf, design, int(K), int(cc["replicates"]), pr, ev_only, stage)
+                    base = {"stage": stage, "arch": arch, "image": image, "config": nm_c, **norm_conf(conf), "rule": pr["rule"],
+                            "M": int(pr["M"])}
+                    rc = []
+                    for (nm, s_), Yr in cb["Y"].items():
+                        ds = dsets[nm][s_]
+                        d = ds.dF.to(Yr.device)
+                        den = float((d * d).sum())
+                        Vd = float(((Yr - Yr.mean(0)) ** 2).sum()) / (Yr.shape[0] - 1) / den
+                        y1, y2 = (t.to(Yr.device) for t in pair_eval[nm_c][nm])
+                        pst = IC.pair_core(y1, y2, d, [int(K)])
+                        diff = ds.project(cb["mean"])[0] - (y1 + y2).mean(0) / 2
+                        Tm = float((diff ** 2).sum()) / den
+                        exp0 = Vd / Yr.shape[0] + pst["Ve"] / y1.shape[0]
+                        rc.append({**base, "dset": nm, "set": s_, "design": design, "K": int(K), "R": int(Yr.shape[0]),
+                                   "V_design": Vd, "V_rev": 2 * pst["Ve"] / int(K), "V_indep": pst["Vpath"] / int(K),
+                                   "rev_minus_design": 2 * pst["Ve"] / int(K) - Vd, "indep_minus_design": pst["Vpath"] / int(K) - Vd,
+                                   "mean_eq_ratio": Tm / exp0 if exp0 > 0 else math.nan, "marg_ks_max": cb["marg_ks_max"],
+                                   "marg_ks_crit": cb["marg_ks_crit"], "marg_ok": cb["marg_ok"], "grads": cb["grads"],
+                                   "seconds": cb["seconds"]})
+                    torch.save({"digest": dgc, "rows": rc}, cpc)
+                    rows["coupled"] += rc
+                    print(f"    [{stage}] {image} {nm_c} {design} K={K}: {cb['grads']} grad, biên KS {cb['marg_ks_max']:.3f} "
+                          f"(tới hạn {cb['marg_ks_crit']:.3f})", flush=True)
     # IG + sàn (một lần mỗi ảnh)
     if sc.get("ig") or stage != "pilot":
         cp = os.path.join(cdir, "_ig_floors.pt")
-        dg = stage_digest(cfg, stage, {k: v for k, v in sc.items() if k not in ("configs", "split", "offset", "n_images")}, "igfl")
+        dg = stage_digest(cfg, stage, sc, "igfl")
         if os.path.exists(cp) and torch.load(cp, weights_only=False).get("digest") == dg:
             r = torch.load(cp, weights_only=False)["rows"]
             for k in rows:
@@ -562,10 +631,11 @@ def estimate(cfg: dict, stage: str, sc: dict, per_eval: float) -> dict:
     g = sum(2 * int(sc["m"]) * NM(c) for c in sc["configs"])
     if stage == "pilot":
         g += sum(int(sc["m_indep"]) * NM(c) for c in sc["configs"])
-    if stage == "e1a" and (sc.get("coupled") or {}).get("enabled"):
+    if stage in ("pilot", "e1a") and (sc.get("coupled") or {}).get("enabled"):
         cc = sc["coupled"]
+        want = [float(a) for a in cc.get("alphas") or []]
         g += sum(len(cc["designs"]) * int(cc["replicates"]) * sum(int(k) for k in cc["Ks"]) * NM(c) for c in sc["configs"]
-                 if c["family"] in ("spi", "patch"))
+                 if c["family"] in ("spi", "patch") and (not want or float(c["alpha"]) in want))
     if sc.get("ig"):
         g += int(sc.get("ig_N", 64)) * int(pr["M"]) * (max(2, int(sc.get("ig_repeats", 8))) if pr["rule"] == "rand" else 1)
     return {"grad_per_image": g, "minutes": int(sc["n_images"]) * g * per_eval / 60}
@@ -641,11 +711,14 @@ def select(cfg: dict, out: str, sc: dict) -> None:
            "dset": D["primary"], "n_images": int(q.image.nunique()), "protocol_digest": lock_digest(cfg),
            "time": _dt.datetime.now().isoformat(timespec="seconds")}
     sp = selection_path(cfg)
+    test_started = os.path.exists(os.path.join(sroot(cfg), "e1b-test", "pairs.csv")) or os.path.isdir(os.path.join(sroot(cfg), "e1b-test", "cache"))
     if os.path.exists(sp) and not cfg["_debug"]:
         old = json.load(open(sp))
-        if old["chosen_name"] != chosen:
-            raise SystemExit(f"{sp} đã tồn tại với cấu hình {old['chosen_name']} ≠ {chosen}; không ghi đè lựa chọn sau khi đã chọn")
-        return
+        if old["chosen_name"] != chosen and test_started:
+            raise SystemExit(f"{sp} đã dùng cho E1b-test ({old['chosen_name']}); không đổi lựa chọn sau khi đã mở tập test")
+        if old["chosen_name"] == chosen:
+            return
+        rec["previous"] = old                                                   # chọn lại trên dev TRƯỚC test: giữ dấu vết
     with open(sp, "w") as fh:
         json.dump(rec, fh, indent=1, default=str)
     print(f"[e1b-dev] chọn {chosen} (L_D(μ) dev = {tab.iloc[0]:.4g}) → {sp}")
@@ -726,8 +799,13 @@ def write_report(cfg: dict) -> str:
                 L.append(f"**Chọn m theo độ rộng CI của ΔV_D({Kp})** (s_b², s_w² từ jackknife theo cặp trong pilot):\n")
                 pl = pd.DataFrame(plan)
                 L.append(md(pl.pivot_table(index=["config", "D", "m"], columns="n_images", values="half_width").reset_index()))
-        L.append(md(ev.groupby(["config", "dset"])[["Ve", "Vo", "L_mu", "rho"] + [f"dV_{k}" for k in pr["Ks"] if f"dV_{k}" in ev]]
-                    .mean().reset_index()))
+        sm = ev.groupby(["config", "dset"])[["Ve", "Vo", "L_mu"] + [f"dV_{k}" for k in pr["Ks"] if f"dV_{k}" in ev]].mean().reset_index()
+        sm = sm.merge(rho_two(ev, float(pr["rho_min_vindep"])), on=["config", "dset"])
+        L.append("Trung bình theo ảnh. Hai estimand KHÁC NHAU của ρ: `rho_mean_img` = TB các ρ̂_i theo ảnh; `rho_ratio_of_means` = "
+                 "2·TB(V̂_e)/TB(V̂_e + V̂_o) (khớp với các cột V_e, V_o bên cạnh). Chỉ ảnh có V̂_indep > ngưỡng.\n")
+        L.append(md(sm))
+        L.append(coupled_table(cfg, _r(out, "pilot", "coupled"), ci, decide=False, title="### Pilot — thiết kế ghép (ước lượng phương sai "
+                                                                                        "hiệu ứng cho power, KHÔNG dùng để chọn δ₂)"))
 
     # ── E1a chính
     ep = _r(out, "e1a", "pairs")
@@ -780,32 +858,33 @@ def write_report(cfg: dict) -> str:
             L.append(md(gr.groupby(["config", "dset", "group"])[cols].mean().reset_index()))
         L.append("**H4 — độ nhạy theo D** (mô tả, không đạt/trượt): ΔV_D và L_D(μ) cho từng D xem bảng trên; thứ hạng phần lệch "
                  "có thể đảo hợp lệ vì đích đổi theo D.\n")
-    cpd = _r(out, "e1a", "coupled")
-    if cpd is not None:
-        L.append("## E1a — thiết kế ghép (`global`, `nbr`) — H2\n")
-        tab = []
-        for (c, dn, des, K), g in cpd.groupby(["config", "dset", "design", "K"]):
-            m_, lo, hi = ci(g.rev_minus_design)
-            # H2: nbr giảm thêm so với rev ⇔ V_rev − V_nbr ≥ δ₂ (global chỉ mô tả)
-            tab.append({"config": c, "D": dn, "thiết kế": des, "K": int(K), "n ảnh": len(g), "V_rev − V_design": _ci_str((m_, lo, hi)),
-                        "quyết định": (f"H2: {ST.decide(lo, hi, pr['delta2'])}" if des == "nbr" and Km is not None and int(K) == int(Km)
-                                       else "mô tả"),
-                        "V_indep − V_design": _ci_str(ci(g.indep_minus_design)),
-                        "tỷ số kiểm kỳ vọng (≈1 nếu giữ biên)": float(g.mean_eq_ratio.median())})
-        L.append(md(pd.DataFrame(tab)))
-        L.append("H2 chỉ có nghĩa khi thiết kế giữ phân phối biên: tỷ số kiểm kỳ vọng ≫ 1 ⇒ trộn lệch với phương sai, không kết luận.\n")
+    L.append(coupled_table(cfg, _r(out, "e1a", "coupled"), ci, decide=True, title="## E1a — thiết kế ghép (`global`, `nbr`) — H2"))
 
     # ── E1b
     dp = _r(out, "e1b-dev", "pairs")
     if dp is not None:
         L.append("## E1b dev — RQ2: L_D(μ_q) theo cấu hình (bộ ô CHỌN, ảnh dev)\n")
         q = dp[(dp.set == "sel") & (dp.group == "all") & (dp.dset == D["primary"])]
-        tab = q.groupby("config").agg(L_mu=("L_mu", "mean"), Ve=("Ve", "mean"), Vo=("Vo", "mean"), n=("image", "nunique")).reset_index()
+        rows_ = []
+        for c, g in q.groupby("config"):
+            Npath = int(g.N.iloc[0]) if "N" in g else 64
+            vp = float(g.Vpath.mean())
+            lm = float(g.L_mu.mean())
+            rows_.append({"config": c, "n ảnh": g.image.nunique(), "L̂_D(μ_q) [CI]": _ci_str(ci(g.L_mu)), "L_mu": lm,
+                          "σ̂² một đường [CI]": _ci_str(ci(g.Vpath)), "q90 σ̂² theo ảnh": float(g.Vpath.quantile(0.9)),
+                          "K để σ̂²/K ≤ 1": int(math.ceil(vp)), "grad (K·N·M) để σ̂²/K ≤ 1": int(math.ceil(vp)) * Npath * int(pr["M"]),
+                          "K để σ̂²/K ≤ 5% L̂": int(math.ceil(vp / max(0.05 * lm, 1e-12)))})
+        tab = pd.DataFrame(rows_)
         ig = _r(out, "e1b-dev", "ig")
         if ig is not None:
             g = ig[(ig.set == "sel") & (ig.group == "all") & (ig.dset == D["primary"])]
-            tab = pd.concat([tab, pd.DataFrame([{"config": g.config.iloc[0], "L_mu": g.L.mean(), "Ve": 0.0, "Vo": 0.0,
-                                                 "n": g.image.nunique()}])]) if len(g) else tab
+            if len(g):
+                tab = pd.concat([tab, pd.DataFrame([{"config": g.config.iloc[0], "n ảnh": g.image.nunique(),
+                                                     "L̂_D(μ_q) [CI]": _ci_str(ci(g.L)), "L_mu": g.L.mean(),
+                                                     "σ̂² một đường [CI]": _ci_str(ci(g.sigma2)) + " (quadrature)" if "sigma2" in g else "—"}])])
+        L.append("L̂_D(μ_q) = L(Ē) − V̂_e/m là endpoint RQ2 (attribution kỳ vọng). σ̂² = V̂_e + V̂_o (phương sai một đường, gồm nhiễu "
+                 "quadrature) quyết định ngân sách thực tế; ở α nhỏ có thể có đuôi nặng — xem q90 và CI. Câu hỏi quyết định: α nhỏ giảm "
+                 "L_D(μ_q) hay chỉ giảm phương sai đường đơn — chỉ cột L̂_D(μ_q) trả lời.\n")
         L.append(md(tab.sort_values("L_mu")))
         if os.path.exists(selection_path(cfg)):
             sel = json.load(open(selection_path(cfg)))
@@ -825,6 +904,40 @@ def write_report(cfg: dict) -> str:
         fh.write("\n".join(L) + "\n")
     print(f"[sampling-infid] {rp}")
     return rp
+
+
+def rho_two(ev, thr: float):
+    """Hai estimand của ρ theo (config, dset): TB theo ảnh của ρ̂_i và tỷ số của các trung bình 2·TB(V_e)/TB(V_e + V_o)."""
+    import pandas as pd
+    out = []
+    for (c, dn), g in ev.groupby(["config", "dset"]):
+        g = g[g.Vpath > thr]
+        out.append({"config": c, "dset": dn, "rho_mean_img": float(g.rho.mean()) if len(g) else np.nan,
+                    "rho_ratio_of_means": float(2 * g.Ve.mean() / g.Vpath.mean()) if len(g) and g.Vpath.mean() > 0 else np.nan,
+                    "n_img_rho": len(g)})
+    return pd.DataFrame(out, columns=["config", "dset", "rho_mean_img", "rho_ratio_of_means", "n_img_rho"])
+
+
+def coupled_table(cfg: dict, cpd, ci, decide: bool, title: str) -> str:
+    import pandas as pd
+    from .report import md
+    if cpd is None or not len(cpd):
+        return ""
+    pr = pcfg(cfg)
+    Km = pr["K_main"]
+    tab = []
+    for (c, dn, des, K), g in cpd.groupby(["config", "dset", "design", "K"]):
+        m_, lo, hi = ci(g.rev_minus_design)
+        marg = g.marg_ok.astype(bool) if "marg_ok" in g else pd.Series([True] * len(g))
+        dec = "mô tả"
+        if decide and des == "nbr" and Km is not None and int(K) == int(Km):
+            dec = f"H2: {ST.decide(lo, hi, pr['delta2'])}" if bool(marg.all()) else "H2: KHÔNG kết luận (biên chưa đạt)"
+        tab.append({"config": c, "D": dn, "thiết kế": des, "K": int(K), "n ảnh": len(g),
+                    "biên đạt (KS)": f"{int(marg.sum())}/{len(g)}", "V_rev − V_design": _ci_str((m_, lo, hi)),
+                    "V_indep − V_design": _ci_str(ci(g.indep_minus_design)), "sd theo ảnh (V_indep − V_design)": float(g.indep_minus_design.std(ddof=1)),
+                    "tỷ số kiểm kỳ vọng (≈1)": float(g.mean_eq_ratio.median()), "quyết định": dec})
+    return (f"{title}\n\nKiểm biên TRƯỚC: KS của Z (nút N/4, N/2, 3N/4) so với lịch trình độc lập cùng họ; tỷ số kiểm kỳ vọng ≫ 1 ⇒ trộn "
+            "lệch với phương sai. H2 chỉ có nghĩa khi cả hai đạt.\n\n" + md(pd.DataFrame(tab)))
 
 
 def mandatory_table(cfg: dict, out: str, stage: str) -> str:
@@ -870,23 +983,21 @@ def h3_table(cfg: dict, out: str, ci) -> str:
     if ig is not None:
         g = ig[(ig.set == "eval") & (ig.group == "all") & (ig.dset == D["primary"])].set_index("image").L
         comps.append(("IG", g))
-    decisions = []
     for nm, other in comps:
         j = pd.concat([ch.rename("ch"), other.rename("ot")], axis=1).dropna()
         if not len(j):
             continue
         m_, lo, hi = ci(j.ot - j.ch)
-        dec = ST.decide(lo, hi, pr["delta3"]) if nm != "SPI baseline" or sel["chosen_name"] != cname(b["baseline"]) else "trùng baseline"
-        decisions.append(dec)
+        if nm == "SPI baseline":
+            dec = ("H3 (chính): " + ST.decide(lo, hi, pr["delta3"])) if sel["chosen_name"] != cname(b["baseline"]) else "trùng baseline"
+        else:
+            dec = "H3b (đối chứng riêng, mô tả): " + ST.decide(lo, hi, pr["delta3"])
         lr = np.log(j.ot.clip(lower=1e-12) / j.ch.clip(lower=1e-12))
         rows.append({"so với": nm, "n ảnh": len(j), f"giảm L_D(μ) ({sel['chosen_name']})": f"{m_:.4g} [{lo:.4g}, {hi:.4g}]",
                      "log-infid theo cặp": _ci_str(ci(lr)), "quyết định": dec})
-    allc = all(d == ST.CONFIRM for d in decisions) and len(decisions) == 2
     s = md(pd.DataFrame(rows))
-    s += (f"\nH3 (phép thử giao–hợp: phải đạt CẢ hai so sánh, không cần hiệu chỉnh multiplicity): **"
-          f"{ST.CONFIRM if allc else (ST.REJECT if any(d == ST.REJECT for d in decisions) else ST.OPEN)}**. Cấu hình chọn trên ảnh dev + "
-          "bộ ô chọn; đánh giá trên ảnh test + bộ ô đánh giá độc lập. L_D(μ_IG) đã khử nhiễu quadrature: L(Ā) − σ̂²_IG / r "
-          "(r lần rút U độc lập trên cùng đường thẳng).\n")
+    s += ("\nH3 = so với SPI baseline trên ảnh test chưa dùng để chọn α (bộ ô đánh giá độc lập). So sánh với IG là đối chứng RIÊNG, "
+          "báo cáo tách, không gộp vào kết luận H3. L_D(μ_IG) đã khử nhiễu quadrature: L(Ā) − σ̂²_IG / r.\n")
     s += "\n" + budget_table(cfg, p, ig, sel["chosen_name"], ci, "E1b test")
     return s
 

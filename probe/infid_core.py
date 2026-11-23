@@ -498,7 +498,23 @@ def floor_fit(Xf: torch.Tensor, df: torch.Tensor, Xe: torch.Tensor, de: torch.Te
         out[f"L_{name}_cv"] = best_l
         out[f"lam_{name}"] = float(best)
         out[f"sumA_{name}"] = float(a.sum())
+        out[f"_coef_{name}"] = a.detach()
     return out
+
+
+def coef_stats(a: torch.Tensor, D: float, prefix: str = "") -> dict:
+    """Chẩn đoán triệt tiêu của một bản đồ hệ số a (patch hoặc pixel, đã cộng kênh):
+      C_cancel = ‖a‖₁ / (|Σa| + ε)          (= 1 khi mọi hệ số cùng dấu; lớn ⇒ khối dương / âm lớn triệt nhau)
+      r_neg    = Σ max(−a, 0) / (Σ|a| + ε)  (tỷ lệ khối lượng âm)
+      l1_over_D = ‖a‖₁ / |ΔF| ; max_over_D = max|a| / |ΔF| ; max_over_mean = max|a| / mean|a| ; frac_neg = tỷ lệ phần tử âm."""
+    a = a.double().flatten()
+    l1 = float(a.abs().sum())
+    eps = 1e-12 * (abs(D) + 1.0)
+    aD = max(abs(D), eps)
+    mx = float(a.abs().max()) if a.numel() else float("nan")
+    return {f"{prefix}C_cancel": l1 / (abs(float(a.sum())) + eps), f"{prefix}r_neg": float((-a).clamp_min(0).sum()) / (l1 + eps),
+            f"{prefix}l1_over_D": l1 / aD, f"{prefix}max_over_D": mx / aD,
+            f"{prefix}max_over_mean": mx / max(l1 / max(a.numel(), 1), eps), f"{prefix}frac_neg": float((a < 0).double().mean())}
 
 
 def mask_rank(E: IEnv, ds: DSet) -> int:

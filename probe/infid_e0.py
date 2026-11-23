@@ -11,6 +11,10 @@ Từ cache attr.pt (bản đồ từng đường SPI, R seed × K đường) c�
      sàn L*_free, L*_comp ở mức patch G×G (G ∈ grids), λ chọn bằng CV trên tập fit, báo in-sample và out-of-sample.
   5. rank(P) của 96 ô; khoảng hở completeness; infid_β (co giãn tối ưu — chỉ chẩn đoán thang đo).
   6. G0 (cổng phân bổ tài nguyên một chiều): dư địa J_indep(K_G0) − L*_comp,patch là CẬN DƯỚI của dư địa thật.
+  8. Độ nhạy theo D (sửa đổi 2): cùng ảnh, cùng attribution (attr.pt), mỗi D trong `extra_sets` (chèn / đối xứng / xoá phân số)
+     có tập fit + tập đánh giá độc lập riêng. Không cần gradient mới nhưng CẦN forward cho ΔF_S của D mới (cache trong dcache).
+  9. Chẩn đoán nghiệm sàn (sửa đổi 2): C_cancel = ‖a‖₁/(|Σa|+ε), r_neg = khối lượng âm / ‖a‖₁, ‖a‖₁/|ΔF|, max|a|/|ΔF|,
+     max|a|/mean|a| — cho nghiệm LS (free, comp) và cho SPI (tổng theo khối cùng lưới, và mức pixel).
   7. Chẩn đoán làm mượt khối (không phải phương pháp mới): S_h A = trung bình A trong khối h×h px (bảo toàn tổng mỗi khối ⇒ bảo
      toàn ΣA; KHÔNG giữ dummy). Đo L_D(A), L_D(S_h A), L̂(S_h μ) trên tập ô đánh giá độc lập. Giảm mạnh ⇒ phân bố không gian ở
      độ phân giải cao đóng góp vào sai số; gần như không giảm ⇒ giả thuyết nhiễu tần số cao yếu đi.
@@ -38,7 +42,7 @@ from .pathbank import settings
 F64 = torch.float64
 E0_VERSION = 1
 E0_DEFAULT = {"n_fit": 1536, "n_eval": 512, "grids": [14, 28], "lams": [0.0, 1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1], "folds": 4,
-              "subsets_per_K": 200, "K_g0": 16, "allow_stale_attr": False, "smooth": [8, 16, 32]}
+              "subsets_per_K": 200, "K_g0": 16, "allow_stale_attr": False, "smooth": [8, 16, 32], "extra_sets": []}
 
 
 def icfg(cfg: dict) -> dict:
@@ -182,9 +186,42 @@ def e0_image(ctx, cfg: dict, pc: dict, idx: int, cdir: str, attr: dict, scores: 
         fl = IC.floor_fit(Xf, ds_f.dF.to(dev), Xe, de, E.D, [float(x) for x in ec["lams"]], int(ec["folds"]),
                           E.cgen("infid-e0-cv", E.image, G))
         for k, v in fl.items():
-            row[f"G{G}_{k}"] = v
+            if not k.startswith("_"):
+                row[f"G{G}_{k}"] = v
+        for nmf in ("free", "comp"):
+            row.update(IC.coef_stats(fl[f"_coef_{nmf}"], E.D, prefix=f"G{G}_floor_{nmf}_"))
+        Abar = a.reshape(R * K, E.H, E.W).mean(0, keepdim=True)
+        labg = SM.grid_pixel_labels(E.H, E.W, int(G)).to(dev)
+        blk = torch.zeros(int(G) * int(G), dtype=F64, device=dev).index_add_(0, labg, Abar.reshape(-1))
+        row.update(IC.coef_stats(blk, E.D, prefix=f"G{G}_spi_"))
         row[f"G{G}_margin_J{Kg}"] = ev.get(f"J_{Kg}", ev["L_mu"] + ev["sigma2"] / Kg) - fl["L_comp_oos"]
         row[f"G{G}_bias_part"] = ev["L_mu"] - fl["L_comp_oos"]
+    row.update(IC.coef_stats(a.reshape(R * K, E.H, E.W).mean(0), E.D, prefix="pix_spi_"))
+    one = [IC.coef_stats(a.reshape(R * K, E.H, E.W)[i], E.D) for i in range(R * K)]
+    row.update({f"pix_path_{k}": float(np.mean([o[k] for o in one])) for k in one[0]})
+    # độ nhạy theo D: cùng attribution, D khác (forward cho ΔF_S, không gradient)
+    dsr = [{"image": E.image, "dset": name, "L_mu": ev["L_mu"], "sigma2": ev["sigma2"], "L_spi": row["ev_spi_infid_seed"],
+            "infid_beta_spi": row["ev_infid_beta_spi"], f"J_{Kg}": ev.get(f"J_{Kg}"), "den": ev["den"],
+            **{f"G{G}_L_comp_oos": row.get(f"G{G}_L_comp_oos") for G in ec["grids"]},
+            **{f"G{G}_L_free_oos": row.get(f"G{G}_L_free_oos") for G in ec["grids"]}}]
+    Dsets = icfg(E.ctx.cfg)["D"]["sets"]
+    for nmx in ec["extra_sets"]:
+        if nmx == name:
+            continue
+        spx = Dsets[nmx]
+        dfx = IC.dset_cached(E, cdir, nmx, spx, int(ec["n_fit"]), "e0-fit", E.ins_batch)
+        dex = IC.dset_cached(E, cdir, nmx, spx, int(ec["n_eval"]), "e0-eval", E.ins_batch)
+        dx_ = dex.dF.to(dev)
+        Yx = dex.project(a.reshape(R * K, E.H, E.W), summed=True)
+        sx = IC.indep_core(Yx, dx_, Ks, c2_sizes=())
+        r_ = {"image": E.image, "dset": nmx, "L_mu": sx["L_mu"], "sigma2": sx["sigma2"],
+              "L_spi": float(np.mean([float(IC.infid(Yx.view(R, K, -1)[r].mean(0, keepdim=True), dx_)[0]) for r in range(R)])),
+              "infid_beta_spi": float(IC.infid_beta(Yx.mean(0, keepdim=True), dx_)[0]), f"J_{Kg}": sx.get(f"J_{Kg}"), "den": sx["den"]}
+        for G in ec["grids"]:
+            flx = IC.floor_fit(IC.patch_design(E, dfx, int(G)), dfx.dF.to(dev), IC.patch_design(E, dex, int(G)), dx_, E.D,
+                               [float(x) for x in ec["lams"]], int(ec["folds"]), E.cgen("infid-e0-cv", E.image, G, nmx))
+            r_[f"G{G}_L_comp_oos"], r_[f"G{G}_L_free_oos"] = flx["L_comp_oos"], flx["L_free_oos"]
+        dsr.append(r_)
     sm = [{"image": E.image, "h": 1, "G": None, "L_mu": ev["L_mu"], "sigma2": ev["sigma2"], "L_spi": row["ev_spi_infid_seed"],
            "L_path": ev["mean_path_infid"], "infid_beta_spi": row["ev_infid_beta_spi"]}]
     for h in ec["smooth"]:
@@ -199,7 +236,7 @@ def e0_image(ctx, cfg: dict, pc: dict, idx: int, cdir: str, attr: dict, scores: 
         for k in ("L_comp_oos", "L_free_oos"):
             if f"G{G}_{k}" in row:
                 sm[-1][f"floor_{k}"] = row[f"G{G}_{k}"]
-    return {"img": row, "kcurve": kc, "groups": gr, "smooth": sm}
+    return {"img": row, "kcurve": kc, "groups": gr, "smooth": sm, "dsets": dsr}
 
 
 def block_average(a: torch.Tensor, G: int) -> torch.Tensor:
@@ -225,7 +262,7 @@ def run(ctx) -> None:
     ps_out = PS.out_dir(cfg)
     out = out_dir(cfg, "e0")
     idxs = ctx.sp["pilot"][:int(pc["n_images"])]
-    rows = {"img": [], "kcurve": [], "groups": [], "smooth": []}
+    rows = {"img": [], "kcurve": [], "groups": [], "smooth": [], "dsets": []}
     t0, f0 = time.time(), SM.FwdCounter.n
     for j, idx in enumerate(idxs):
         image = f"seg{idx:05d}"
@@ -261,7 +298,8 @@ def run(ctx) -> None:
         for k in rows:
             rows[k] += [res[k]] if k == "img" else res.get(k, [])
     import pandas as pd
-    for k, name in (("img", "e0_images"), ("kcurve", "e0_kcurve"), ("groups", "e0_groups"), ("smooth", "e0_smooth")):
+    for k, name in (("img", "e0_images"), ("kcurve", "e0_kcurve"), ("groups", "e0_groups"), ("smooth", "e0_smooth"),
+                    ("dsets", "e0_dsets")):
         if rows[k]:
             pd.DataFrame(rows[k]).to_csv(os.path.join(out, f"{name}.csv"), index=False)
     with open(os.path.join(out, "meta.json"), "w") as fh:
@@ -380,15 +418,64 @@ def write_report(cfg: dict) -> str:
                  "infid_β(S_h SPI)": float(g.infid_beta_spi.mean())}
             if int(h) > 1:
                 j = base.L_mu.reindex(g.index)
-                r["log(L̂(μ)/L̂(S_h μ)) theo ảnh"] = _fmt_ci(ST.boot_ci(np.log(j.clip(lower=1e-12) / g.L_mu.clip(lower=1e-12)), B, seed, al))
+                lg = np.log(j.clip(lower=1e-12) / g.L_mu.clip(lower=1e-12))
+                r["log(L̂(μ)/L̂(S_h μ)) theo ảnh"] = _fmt_ci(ST.boot_ci(lg, B, seed, al))
+                r["giảm theo TB: 1 − TB(L̂(S_h μ))/TB(L̂(μ))"] = f"{100 * (1 - g.L_mu.mean() / j.mean()):.1f}%"
+                r["giảm hình học theo ảnh: 1 − exp(−TB log)"] = f"{100 * (1 - math.exp(-float(lg.mean()))):.1f}%"
                 if "floor_L_comp_oos" in g and g.floor_L_comp_oos.notna().any():
                     r["L̂(S_h μ) − L*_comp,patch"] = _fmt_ci(ST.boot_ci(g.L_mu - g.floor_L_comp_oos, B, seed, al))
                 r["max |ΔΣA|"] = float(g.sum_err.max())
             tab.append(r)
         L.append(md(pd.DataFrame(tab)))
+        L.append("Hai cách tổng hợp mức giảm (KHÁC estimand): theo TB = tỷ số của trung bình các ảnh (ảnh có infid lớn chi phối); hình học = "
+                 "trung bình theo ảnh của log-tỷ số (mỗi ảnh trọng số bằng nhau). Làm mượt khối cũng đổi attribution gần biên mask / biên vật, "
+                 "nên mức giảm KHÔNG tự chứng minh lỗi chỉ nằm ở một dải tần số.\n")
         L.append("Đọc: L̂(S_h μ) giảm mạnh so với h = 1 ⇒ phân bố không gian ở độ phân giải dưới h px đóng góp lớn vào sai số "
                  "(phù hợp giả thuyết dương/âm tần số cao). Nếu L̂(S_h μ) vẫn xa sàn patch cùng lưới ⇒ còn sai lệch ở chính tổng theo khối "
                  "(độ lớn / hướng ở tần số thấp), không chỉ nhiễu tần số cao. infid_β = 1 − cos²(PA, ΔF) cho phần hướng.\n")
+    dsd = _read(out, "e0_dsets")
+    if dsd is not None and dsd.dset.nunique() > 1:
+        L.append("## 3c. Độ nhạy theo D (cùng ảnh, cùng attribution; mỗi D có tập fit / đánh giá độc lập)\n")
+        L.append("Không cần gradient mới, nhưng mỗi D mới cần forward cho ΔF_S. Thứ hạng phần lệch có thể đảo hợp lệ vì đích đổi theo D.\n")
+        tab = []
+        for dn, g in dsd.groupby("dset", sort=False):
+            r = {"D": dn, "n ảnh": len(g), "L̂(μ)": _fmt_ci(ST.boot_ci(g.L_mu, B, seed, al)), "σ̂²": _fmt_ci(ST.boot_ci(g.sigma2, B, seed, al)),
+                 "infid(SPI)": float(g.L_spi.mean()), "infid_β(SPI)": float(g.infid_beta_spi.mean())}
+            for G in ec["grids"]:
+                if f"G{G}_L_comp_oos" in g:
+                    r[f"L*_comp patch {G}"] = float(g[f"G{G}_L_comp_oos"].mean())
+                    r[f"L*_free patch {G}"] = float(g[f"G{G}_L_free_oos"].mean())
+            tab.append(r)
+        L.append(md(pd.DataFrame(tab)))
+        prim = dsd[dsd.dset == name].set_index("image").L_mu
+        tab = []
+        for dn, g in dsd[dsd.dset != name].groupby("dset", sort=False):
+            j = prim.reindex(g.set_index("image").index)
+            lg = np.log(j.values.clip(1e-12) / g.L_mu.values.clip(1e-12))
+            tab.append({"D": dn, f"log(L̂(μ; {name}) / L̂(μ; D)) theo ảnh": _fmt_ci(ST.boot_ci(lg, B, seed, al))})
+        L.append("Dương ⇒ cùng attribution kỳ vọng khớp D này tốt hơn D chính (ví dụ chèn hỏi f gần baseline, xoá hỏi f gần đỉnh toàn-bật):\n")
+        L.append(md(pd.DataFrame(tab)))
+    cc = [c for c in im.columns if "C_cancel" in c]
+    if cc:
+        L.append("## 3d. Chẩn đoán triệt tiêu: nghiệm sàn LS so với SPI\n")
+        L.append("C_cancel = ‖a‖₁/(|Σa|+ε) (=1 khi mọi hệ số cùng dấu), r_neg = khối lượng âm / ‖a‖₁, ‖a‖₁/|ΔF|, max|a|/|ΔF|, "
+                 "max|a|/mean|a|; theo lưới patch (a = tổng theo khối) và mức pixel. Sàn thấp nhờ các khối dương/âm lớn triệt nhau "
+                 "⇒ C_cancel, ‖a‖₁/|ΔF| lớn — khi đó sàn là benchmark khả năng biểu diễn, không phải attribution dễ diễn giải.\n")
+        tab = []
+        keys = ["C_cancel", "r_neg", "l1_over_D", "max_over_D", "max_over_mean", "frac_neg"]
+        objs = [(f"sàn free, patch {G}", f"G{G}_floor_free_") for G in ec["grids"]] + \
+               [(f"sàn comp, patch {G}", f"G{G}_floor_comp_") for G in ec["grids"]] + \
+               [(f"SPI (Ā, 32 đường), patch {G}", f"G{G}_spi_") for G in ec["grids"]] + \
+               [("SPI (Ā), pixel", "pix_spi_"), ("một đường SPI, pixel (TB)", "pix_path_")]
+        for lab_, pf in objs:
+            if f"{pf}C_cancel" not in im:
+                continue
+            r = {"bản đồ": lab_}
+            for k in keys:
+                v = im[f"{pf}{k}"]
+                r[f"{k} (trung vị)"] = float(v.median())
+            tab.append(r)
+        L.append(md(pd.DataFrame(tab)))
     L.append("## 4. G0 — cổng phân bổ tài nguyên (một chiều)\n")
     d0 = pr.get("delta0")
     for G in ec["grids"]:

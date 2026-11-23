@@ -78,9 +78,9 @@ infid:
     K_secondary: [2, 8, 16]  # báo cáo phụ (không đạt/trượt)
     Ks: [1, 2, 4, 8, 16]
     delta0: 1.0              # G0 — cổng phân bổ tài nguyên (một chiều, không dừng nghiên cứu)
-    delta1: null             # H1: ΔV_D(K_main) ≥ δ₁
-    delta2: null             # H2: V_rev − V_nbr ≥ δ₂
-    delta3: null             # H3: giảm L_D(μ) so với SPI baseline và IG ≥ δ₃
+    delta1: 0.75             # H1: ΔV_D(4) ≥ 0,75 — mức cải thiện tuyệt đối tối thiểu (≈ 10% V_indep(4)); sửa đổi 2
+    delta2: null             # H2: chưa khoá — chọn theo ý nghĩa thực tiễn, ĐỘC LẬP với kết quả pilot (chỉ bắt buộc khi e1a.coupled bật)
+    delta3: 2.4              # H3: giảm L_D(μ) so với SPI baseline ≥ 2,4 (≈ 10% L(μ_SPI)); IG là đối chứng riêng (H3b, mô tả)
     rho_min_vindep: 1.0e-4   # chỉ báo ρ̂ khi V̂_indep(1) vượt ngưỡng (tránh 0/0)
     alpha: 0.05
     bootstrap: 10000
@@ -119,7 +119,8 @@ infid:
     coverage: {d: 16, N: 8, alpha: 10, n_pool: 64, truth_nb: 16, truth_b: 8192, n_images: [8, 16], m: [8, 32], reps: 200,
                bootstrap: 2000}
   e0: {n_fit: 1536, n_eval: 512, grids: [14, 28], lams: [0.0, 1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1], folds: 4, subsets_per_K: 200,
-       K_g0: 16, allow_stale_attr: false, smooth: [8, 16, 32]}    # smooth: chẩn đoán làm mượt khối h px (bảo toàn tổng)
+       K_g0: 16, allow_stale_attr: false, smooth: [8, 16, 32],     # smooth: chẩn đoán làm mượt khối h px (bảo toàn tổng)
+       extra_sets: [ins_sq, sym_sq, frac50]}                    # độ nhạy theo D (forward cho ΔF_S, không gradient)
   quad: {split: pilot, offset: 0, n_images: 4, paths_per_alpha: 2, alphas: [1, 10, 100], N: 64, ig: true, ig_N: 64,
          L_max: 4, tol_ref: 1.0e-3, tol: 1.0e-2, rand_M: [1], n_sets: 256,
          rand_repeats: 8, repeat_check: true}     # C3c: τ²_D từ 8 lần rút U / đường; kiểm lặp lại xác định (cache riêng)
@@ -129,19 +130,24 @@ infid:
     n_images: 8
     m: 16                    # cặp rev
     m_indep: 32              # nhánh indep nhỏ (đối chiếu phương sai suy từ cặp)
-    configs: [{family: spi, alpha: 10, N: 64}]
+    configs: [{family: spi, alpha: 10, N: 64}, {family: spi, alpha: 1, N: 64}]
+    # (c) giới hạn: nbr ở α = 10 và một α nhỏ, chỉ để ước lượng phương sai hiệu ứng cho power — KHÔNG dùng để chọn δ₂.
+    #     Kiểm phân phối biên (KS) và tỷ số kiểm kỳ vọng trước khi đọc kết quả.
+    coupled: {enabled: true, designs: [nbr], Ks: [4], replicates: 8, alphas: [10, 1]}
   e1a:
     split: fresh             # ảnh mới, không giao ảnh pilot dùng để chọn K_main / δ
     offset: 600
-    n_images: 48             # mục tiêu ban đầu; chốt lại từ sd của ΔV_D ở pilot (báo cáo pilot) trước infid-lock
-    m: 32
-    configs: [{family: spi, alpha: 10, N: 64}, {family: spi, alpha: 1, N: 64}, {family: spi, alpha: 100, N: 64}]
-    coupled: {enabled: false, designs: [global, nbr], Ks: [2, 4, 8, 16], replicates: 8}   # bật sau khi C1 đạt
+    n_images: 32             # mục tiêu ban đầu (sửa đổi 2); có thể tăng sau power analysis
+    m: 16
+    configs: [{family: spi, alpha: 10, N: 64}, {family: spi, alpha: 1, N: 64}]   # α = 10 chính; α = 1 phụ (thăm dò, không suy rộng)
+    coupled: {enabled: false, designs: [global, nbr], Ks: [2, 4, 8, 16], replicates: 8, alphas: []}   # bật khi δ₂ đã chốt
   e1b:
     dev: {split: pilot, offset: 0, n_images: 16}
     test: {split: fresh, offset: 400, n_images: 48}
     m: 16
-    grid: {family: [spi, patch], alpha: [1, 3, 10, 30, 100, 1000], N: [64], G: [7], eta: [0.5]}
+    # Vòng 1 (sửa đổi 2): chỉ α ∈ {0,1; 0,3; 1; 10}, N = 64, cùng ảnh. Mở N ∈ {32, 128} / patch / hier chỉ sau khi vòng 1 cho thấy
+    # L_D(μ_q) (không phải phương sai đường đơn) thực sự giảm. Chọn lại trên dev được phép cho tới khi E1b-test bắt đầu.
+    grid: {family: [spi], alpha: [0.1, 0.3, 1, 10], N: [64], G: [7], eta: [0.5]}
     baseline: {family: spi, alpha: 10, N: 64}
     ig_N: 64
     ig_repeats: 8            # IG với rand: L̂(μ_IG) = L(Ā) − σ̂²_IG / r; J_IG(K) = đối chứng cùng ngân sách
