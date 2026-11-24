@@ -79,3 +79,16 @@ Quyết định (theo phản biện):
    kiểm J thực nghiệm + mô phỏng độ phủ của chính quy trình CI.
 4. Đóng băng BUDGET2 dev-only (`budget2-freeze`); tập test fresh 1000– được giữ lại. Mở lại chỉ khi có ứng viên mạnh hơn và quyết định
    mới được ghi vào đây trước.
+
+## 8. Sau kiểm toán (budget2-audit lần 1) — quyết định và hiệu chuẩn CI
+
+Cross-fit: g ở B = 4096 còn ≈ +2,0 % (P(g > 0) ≈ 0,61); B = 2048 ≈ +2,4 %; nhánh A âm. Trên bộ đánh giá, B = 4096: g = 5,2 %
+[−10,0 %; 17,0 %], p bootstrap-t 0,216 (g > 0) và 0,463 (g > δ). Quyết định: incumbent giữ nguyên; không test nhánh A; hoãn test
+hier B = 4096; không mở lưới GPU mới. Ứng viên B = 4096 đã qua cổng sàng lọc — ghi nguyên sự thật này, nhưng không gọi là nghiệm mới.
+
+Hiệu chuẩn CI của kiểm J (CPU, `budget2-audit` mục 3): mô phỏng 7 kịch bản (đuôi trong ảnh gauss / exp / t5 / t3; số chiều hiệu
+dụng của nhiễu r ∈ {64, 16, 4, 1}; thang đo giữa ảnh lognormal hoặc lấy lại từ √V thực; ρ = trung vị dữ liệu), 2000 lần lặp mỗi
+kịch bản, so 4 phương pháp CI (percentile, BCa, t, bootstrap-t). Quy tắc chọn đặt trước khi áp lên dữ liệu thật: max của độ phủ nhỏ
+nhất; hoà trong 1 SE Monte Carlo ⇒ độ rộng tương đối nhỏ hơn. Kiểm J trên dữ liệu thật (BUDGET2 dev, BUDGET 1) được làm lại với
+phương pháp đó; số dòng loại 0 so với tỷ lệ trượt mô phỏng của chính phương pháp. p Student t tính thuần Python (không phụ thuộc
+scipy) để tái lập trên mọi máy. Sau đó mới `budget2-freeze`.

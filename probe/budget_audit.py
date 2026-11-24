@@ -24,21 +24,63 @@ from . import config as C
 from .infid_posthoc import boot_idx, boot_p, ci_of, fmt_ci, holm
 
 
+def _betacf(a: float, b: float, x: float) -> float:
+    """Phân số liên tục cho tích phân beta không đầy đủ (Lentz)."""
+    tiny, eps = 1e-300, 3e-16
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c, d = 1.0, 1.0 - qab * x / qap
+    d = 1.0 / (d if abs(d) > tiny else tiny)
+    h = d
+    for m in range(1, 400):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + aa / c
+        c = c if abs(c) > tiny else tiny
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + aa / c
+        c = c if abs(c) > tiny else tiny
+        de = d * c
+        h *= de
+        if abs(de - 1.0) < eps:
+            break
+    return h
+
+
+def betainc(a: float, b: float, x: float) -> float:
+    """I_x(a, b) chuẩn hoá."""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    lbt = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b) + a * math.log(x) + b * math.log1p(-x)
+    if x < (a + 1.0) / (a + b + 2.0):
+        return math.exp(lbt) * _betacf(a, b, x) / a
+    return 1.0 - math.exp(lbt) * _betacf(b, a, 1.0 - x) / b
+
+
 def t_sf(t: float, df: int) -> float:
-    """P(T_df ≥ t). scipy nếu có, ngược lại xấp xỉ chuẩn (df ≥ 30 sai khác < 0,01 ở mức p ~ 0,05)."""
-    try:
-        from scipy.stats import t as _t
-        return float(_t.sf(t, df))
-    except Exception:  # noqa: BLE001
-        return float(1 - NormalDist().cdf(t))
+    """P(T_df ≥ t), Student t chính xác (thuần Python, không phụ thuộc scipy ⇒ p tái lập trên mọi máy)."""
+    if not math.isfinite(t):
+        return 0.0 if t > 0 else 1.0
+    tail = 0.5 * betainc(df / 2.0, 0.5, df / (df + t * t))
+    return tail if t >= 0 else 1.0 - tail
 
 
 def t_ppf(q: float, df: int) -> float:
-    try:
-        from scipy.stats import t as _t
-        return float(_t.ppf(q, df))
-    except Exception:  # noqa: BLE001
-        return float(NormalDist().inv_cdf(q))
+    """Phân vị Student t (chia đôi trên t_sf)."""
+    lo, hi = -1e4, 1e4
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        if 1.0 - t_sf(mid, df) < q:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
 
 
 # ─────────────────────────────────────────────────────────────────────────────

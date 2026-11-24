@@ -16,13 +16,16 @@
 #   budget2-dev → budget2-lock → budget2-test   vòng 2 (vượt incumbent) → runs_probe/pilot/infid/INFID_BUDGET2_REPORT.md
 #   budget2-audit            kiểm toán BUDGET2 dev-only, không GPU → runs_probe/pilot/infid/INFID_BUDGET2_AUDIT.md
 #   budget2-freeze           đóng băng BUDGET2 dev-only (chặn lock / test) → runs_probe/pilot/infid/budget2/FROZEN.json
+#   pathfam-audit            PATH_FAMILIES Phase 0, CPU → runs_probe/pilot/infid/pathfam/PATH_FAMILIES_CHECKS.md
+#   pathfam-plan             CPU: kế hoạch + kiểm toán chi phí gradient → runs_probe/pilot/infid/pathfam/PATHFAM_PLAN.md
+#   pathfam-dev → pathfam-lock → pathfam-test   Phase 1 (GPU) → runs_probe/pilot/infid/INFID_PATHFAM_REPORT.md
 #   *-report                 dựng lại báo cáo từ CSV: toy-report, pathscore-report, pathscore-infid-report, quad-check-report,
 #                            sampling-infid-report
 #   <lệnh>-debug             bản debug của mọi lệnh trên (ít ảnh, ít bước; ghi vào runs_probe_debug/)
 # env: CFG=config.yaml, EXTRA="--device cuda:1"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-STAGE=${1:?lệnh: test|toy|toy-large|pathscore|pathscore-infid-decomp|quad-check|sampling-infid-pilot|infid-lock|sampling-infid-e1a|sampling-infid-e1b-dev|sampling-infid-e1b-test|sampling-infid-e2|budget-dev1|budget-dev2|budget-lock|budget-test|budget-audit|budget2-dev|budget2-lock|budget2-test|budget2-audit|budget2-freeze|*-report|*-debug}
+STAGE=${1:?lệnh: test|toy|toy-large|pathscore|pathscore-infid-decomp|quad-check|sampling-infid-pilot|infid-lock|sampling-infid-e1a|sampling-infid-e1b-dev|sampling-infid-e1b-test|sampling-infid-e2|budget-dev1|budget-dev2|budget-lock|budget-test|budget-audit|budget2-dev|budget2-lock|budget2-test|budget2-audit|budget2-freeze|pathfam-audit|pathfam-plan|pathfam-dev|pathfam-lock|pathfam-test|*-report|*-debug}
 CFG=${CFG:-config.yaml}
 EXTRA=${EXTRA:-}
 PY="python -m probe --config $CFG $EXTRA"

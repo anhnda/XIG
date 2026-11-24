@@ -121,7 +121,8 @@ def test_crossfit_removes_selection_optimism():
     chal = list(range(1, k + 1))
     g_naive = max((Ws[:, 0].mean() - Ws[:, c].mean()) / Ws[:, 0].mean() for c in chal)
     cf = B2A.crossfit(Ws, We, 0, chal, None, 200, 3)
-    assert g_naive > 0 and abs(cf["g_mean"]) < g_naive
+    # kỳ vọng thật = 0: ước lượng cross-fit phải bớt lạc quan hơn ước lượng chọn-trong-mẫu và nằm quanh 0
+    assert g_naive > 0 and cf["g_mean"] < g_naive and abs(cf["g_mean"]) < 0.05
     sb = B2A.selection_boot(Ws, 0, chal, None, 500, 3)
     assert sb["g_mean"] > 0                                  # chọn trong mẫu ⇒ lạc quan
 
@@ -142,7 +143,22 @@ def test_empirical_rev_identity():
     assert em == pytest.approx(rhs, rel=1e-10)
 
 
-def test_sim_coverage_runs_small():
-    rows = B2A.sim_coverage(n_img=6, m=8, Ks=[4], n_cells=16, reps=3, n_boot=100, seed=1)
-    assert {r["coupling"] for r in rows} == {"indep", "rev"}
-    assert all(0 <= r["độ phủ thực"] <= 1 for r in rows)
+def test_student_t_pure_python():
+    assert BA.t_ppf(0.975, 10) == pytest.approx(2.228139, abs=1e-5)
+    assert BA.t_ppf(0.95, 47) == pytest.approx(1.677927, abs=1e-5)
+    assert BA.t_sf(2.039513, 31) == pytest.approx(0.025, abs=1e-5)
+    assert BA.t_sf(-1.0, 5) == pytest.approx(1 - BA.t_sf(1.0, 5), abs=1e-12)
+
+
+def test_ci_methods_and_choice():
+    from probe import jcheck_calib as JC
+    v = np.random.default_rng(2).normal(0.0, 1.0, 40)
+    cis = JC.ci_methods(v, 1000, 1)
+    assert set(cis) == set(JC.METHODS)
+    for lo, hi, p in cis.values():
+        assert lo < v.mean() < hi and 0 <= p <= 1
+    rows = JC.simulate({"name": "x", "between": 0.5, "within": "t3", "r": 2}, n_img=6, m=8, Ks=[4], reps=3, n_boot=100, seed=1,
+                       n_cells=16)
+    assert {r["coupling"] for r in rows} == {"indep", "rev"} and {r["phương pháp"] for r in rows} == set(JC.METHODS)
+    ch = JC.choose_method(rows)
+    assert ch["chosen"] in JC.METHODS

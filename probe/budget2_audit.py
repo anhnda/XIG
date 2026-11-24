@@ -93,47 +93,6 @@ def selection_boot(Ws: np.ndarray, ref_fixed, chal: list, refs: list, n_boot: in
     return {"g_mean": float(g.mean()), "choices": c}
 
 
-def sim_coverage(n_img: int, m: int, Ks, n_cells: int, reps: int, n_boot: int, seed: int, rho: float = -0.3) -> list:
-    """Độ phủ thực của CI percentile 95 % cho TB(J_emp − J_f) qua ảnh, J_emp / J_f như mã thật (BO.empirical_J, IC.pair_core).
-    Mỗi ảnh: thang đo lognormal (đuôi nặng giữa ảnh); nhiễu đường có thang ngẫu nhiên (đuôi nặng trong ảnh), cặp tương quan rho
-    (phân phối biên của hai thành viên bằng nhau — đúng điều kiện của rev). Nhiễu: chuẩn × √(Exp(1)) theo từng đường."""
-    g = torch.Generator().manual_seed(int(seed))
-    out = {}
-    for _ in range(int(reps)):
-        diffs = {}
-        for _i in range(int(n_img)):
-            s = float(torch.empty(1).log_normal_(0.0, 0.7, generator=g))
-            mu = torch.randn(n_cells, generator=g, dtype=F64)
-            d = mu + 0.5 * torch.randn(n_cells, generator=g, dtype=F64)
-
-            def tnoise(shape):
-                z = torch.randn(shape, generator=g, dtype=F64)
-                w = torch.empty(shape[0], 1, dtype=F64).exponential_(1.0, generator=g)    # thang ngẫu nhiên theo đường ⇒ đuôi nặng
-                return z * w.sqrt() * 1.5
-            a, b_ = tnoise((m, n_cells)), tnoise((m, n_cells))
-            y1 = mu + s * a
-            y2 = mu + s * (rho * a + math.sqrt(1 - rho * rho) * b_)
-            st = IC.pair_core(y1, y2, d, list(Ks))
-            em = BO.empirical_J(y1, y2, d, Ks)
-            for K in Ks:
-                for cp in BO.COUPLINGS:
-                    k = f"Jemp_{cp}_{K}"
-                    if k in em and BO.coupling_ok(cp, K):
-                        diffs.setdefault((cp, K), []).append(em[k] - BO.j_val(st["L_mu"], st["Ve"], st["Vo"], K, cp))
-        for key, v in diffs.items():
-            v = np.asarray(v)
-            lo, hi = ci_of(v[boot_idx(len(v), n_boot, int(seed))].mean(1), 0.05)
-            o = out.setdefault(key, {"cover": 0, "below": 0, "above": 0, "n": 0, "skew": []})
-            o["n"] += 1
-            o["cover"] += int(lo <= 0 <= hi)
-            o["below"] += int(hi < 0)
-            o["above"] += int(lo > 0)
-            o["skew"].append(float(((v - v.mean()) ** 3).mean() / (v.std() ** 3 + 1e-300)))
-    return [{"coupling": cp, "K": K, "lần lặp": o["n"], "độ phủ thực": o["cover"] / o["n"], "CI nằm dưới 0": o["below"] / o["n"],
-             "CI nằm trên 0": o["above"] / o["n"], "skew TB của chênh theo ảnh": float(np.mean(o["skew"]))}
-            for (cp, K), o in sorted(out.items())]
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # báo cáo
 # ─────────────────────────────────────────────────────────────────────────────
@@ -205,18 +164,54 @@ def gate_section(cfg: dict) -> list:
     return L
 
 
-def sim_section(cfg: dict) -> list:
+def calib_section(cfg: dict) -> list:
+    """Hiệu chuẩn lại CI của kiểm J (CPU): mô phỏng nhiều kịch bản gần dữ liệu, chọn phương pháp theo quy tắc đặt trước, làm lại kiểm J
+    trên dữ liệu thật (BUDGET2 dev và BUDGET 1) với phương pháp đó."""
     import pandas as pd
+    from . import jcheck_calib as JC
     from .report import md
     b, pr = B2.b2(cfg), B2.pr2(cfg)
+    ac = b.get("audit") or {}
     dbg = bool(cfg.get("_debug"))
-    rows = sim_coverage(n_img=int(b["dev"]["n_images"]), m=int(b["dev"]["m"]), Ks=[int(k) for k in pr["check_K"]],
-                        n_cells=64 if dbg else 256, reps=10 if dbg else 200, n_boot=200 if dbg else 2000, seed=int(pr["seed"]))
-    return ["## 3. Hiệu chuẩn quy trình kiểm J thực nghiệm (mô phỏng CPU, J đúng = công thức kỳ vọng)\n",
-            f"Cùng số ảnh ({b['dev']['n_images']}), số cặp m = {b['dev']['m']}, K {pr['check_K']}, cùng hàm `empirical_J` và `pair_core` như mã thật; "
-            "đuôi nặng giữa ảnh (thang lognormal) và trong ảnh (phương sai đường ngẫu nhiên). Hai ước lượng cùng không chệch theo cấu "
-            "trúc, nên độ phủ thực < 95 % hoặc lệch một phía (CI dưới / trên 0) đo trực tiếp sai lệch của CI percentile — không phải của "
-            "công thức. So số CI trượt trong dữ liệu thật với tỷ lệ \"không phủ\" ở đây.\n", md(pd.DataFrame(rows))]
+    v = B2.view(cfg)
+    Dp = b["sets"][0]
+    p = B2._read("dev", "pairs", cfg)
+    scales = JC.data_scales(p, Dp) if p is not None else np.ones(1)
+    rho = JC.data_rho(p, Dp) if p is not None else 0.0
+    Ks = sorted({int(k) for k in pr["check_K"]} | {int(k) for k in BO.bpr(cfg)["check_K"]})
+    n_img, m = int(b["dev"]["n_images"]), int(b["dev"]["m"])
+    reps = int(ac.get("sim_reps", 2000)) if not dbg else 6
+    nb = int(ac.get("sim_boot", 2000)) if not dbg else 100
+    scen = ac.get("scenarios") or JC.DEFAULT_SCEN
+    rows = []
+    for k, sc in enumerate(scen):
+        print(f"[budget2-audit] mô phỏng {k + 1}/{len(scen)}: {sc['name']} × {reps} lần", flush=True)
+        rows += JC.simulate(sc, n_img, m, Ks, reps, nb, int(pr["seed"]) + 1000 * k, int(ac.get("sim_cells", 64)), rho, scales)
+    t = pd.DataFrame(rows)
+    t.to_csv(os.path.join(B2.root(cfg), "audit_sim_coverage.csv"), index=False)
+    ch = JC.choose_method(rows)
+    chosen = ch["chosen"]
+    dat = t[(t["phương pháp"] == chosen) & t["kịch bản"].str.startswith("dữ liệu")]
+    miss = {(c_, int(k_)): 1 - float(g_["độ phủ"].mean()) for (c_, k_), g_ in dat.groupby(["coupling", "K"])}
+    piv = t.groupby(["kịch bản", "phương pháp"])["độ phủ"].min().unstack()
+    L = ["## 3. Hiệu chuẩn lại CI của kiểm J thực nghiệm (mô phỏng CPU)\n",
+         f"{n_img} ảnh, m = {m} cặp, K {Ks}, {reps} lần lặp mỗi kịch bản (SE Monte Carlo ≈ {math.sqrt(0.95 * 0.05 / max(reps, 1)):.3f} ở độ phủ 95 %), "
+         f"bootstrap {nb}; ρ giữa hai thành viên cặp = {rho:.3f} (trung vị dữ liệu dev); kịch bản \"dữ liệu\" lấy lại thang đo giữa ảnh "
+         f"từ {len(scales)} giá trị √V thực. Đúng = 0 trên mọi ảnh (hai ước lượng cùng không chệch theo cấu trúc). "
+         "Bảng đầy đủ: budget2/audit_sim_coverage.csv.\n",
+         "**Độ phủ NHỎ NHẤT qua (coupling, K) theo kịch bản × phương pháp** (danh nghĩa 0,95):\n", md(piv.reset_index()),
+         "**Tóm tắt theo phương pháp** (quy tắc đặt trước: max của độ phủ nhỏ nhất; hoà trong 1 SE MC ⇒ độ rộng tương đối nhỏ hơn):\n",
+         md(pd.DataFrame(ch["summary"])), f"**Phương pháp được chọn: `{chosen}`.**\n",
+         f"### Làm lại kiểm J trên dữ liệu thật với `{chosen}` (kèm cờ của cả 4 phương pháp)\n",
+         "Số dòng loại 0 được so với tỷ lệ trượt MÔ PHỎNG của chính phương pháp đó trong các kịch bản \"dữ liệu\" (không phải 5 % danh nghĩa). "
+         "Các dòng cùng cấu hình dùng chung đường ⇒ không độc lập. BUDGET 1 dev2 dùng m = 16, test 48 ảnh — mô phỏng ở m = 32, 32 ảnh "
+         "chỉ là xấp xỉ cho hai giai đoạn đó.\n",
+         "#### BUDGET2 dev\n"]
+    L += JC.recheck(v, ("dev",), int(pr["bootstrap"]), int(pr["seed"]), float(pr["alpha"]), chosen, miss)
+    L.append("#### BUDGET 1\n")
+    L += JC.recheck(cfg, ("dev1", "dev2", "test"), int(BO.bpr(cfg)["bootstrap"]), int(BO.bpr(cfg)["seed"]), float(BO.bpr(cfg)["alpha"]),
+                    chosen, miss)
+    return L
 
 
 def run(cfg: dict) -> str:
@@ -228,7 +223,7 @@ def run(cfg: dict) -> str:
     L += gate_section(cfg)
     v = B2.view(cfg)
     L += [x.replace("## 3. Kiểm J thực nghiệm", "## 2. Kiểm J thực nghiệm (dev BUDGET2)") for x in emp_section(v, stages=("dev",))]
-    L += sim_section(cfg)
+    L += calib_section(cfg)
     with open(rp, "w") as fh:
         fh.write("\n".join(L) + "\n")
     print(f"[budget2-audit] {rp}")

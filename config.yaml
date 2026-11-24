@@ -273,6 +273,68 @@ budget2:
     pointing_tol: 15
     top_frac: 0.05
   gpu_minutes: {dev: 300, test: 300}
+  audit:                               # budget2-audit (CPU): hiệu chuẩn CI của kiểm J bằng mô phỏng (kịch bản mặc định trong probe/jcheck_calib.py)
+    sim_reps: 2000                     # SE Monte Carlo ≈ 0,005 ở độ phủ 95 %
+    sim_boot: 2000
+    sim_cells: 64
+    scenarios: null
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PATH_FAMILIES — Phase 0 (CPU): kiểm tính chất 4 họ đường + phân tích lại E10 (docs/PATH_FAMILIES_AUDIT.md). Phase 1 chưa mở.
+path_families:
+  alphas: [0.1, 0.3, 1, 3, 10]       # lưới khớp exploration h = 1/(α + 1)
+  N: [32, 64]
+  smooth_delta: [0.5, 0.674, 1.0]    # smooth chỉ đơn điệu khi δ ≤ 1 (⇔ α khớp ≥ 4)
+  mc_d: 20000
+  calib_seed: 10                     # = E10
+  e10_csv: null                      # đường dẫn tới runs_probe/e10_fresh/e10_fam.csv của lần chạy E10 (nếu còn)
+  e10_margin: 0.02
+  bootstrap: 10000
+  seed: 53
+
+# PATH_FAMILIES Phase 1 (docs/PATH_FAMILIES_PROTOCOL.md, đã duyệt 24/11): 4 họ × J_rev ở B cố định; ảnh mới dev fresh 1200–1231, test 1300–.
+pathfam:
+  protocol:
+    rule: rand
+    M: 1
+    budgets: [256, 1024]               # kiểm định chính
+    budgets_secondary: [128, 512, 2048, 4096]
+    Ks: [2, 4, 8, 16, 32]
+    check_K: [4, 16]
+    alpha: 0.05
+    bootstrap: 10000
+    seed: 61
+    floor_grids: [14]
+    floor_lams: [0.0, 1.0e-3, 1.0e-2, 1.0e-1]
+    floor_folds: 4
+    select_coupling: rev               # chọn + so với incumbent bằng J_rev; J_indep báo riêng
+    ni_margin: 0.10                    # NI chính: H0 g ≤ −0,10; Holm qua 4 (ln, cmix × 2 B)
+    eq_margin: 0.10                    # TOST phụ
+    power: 0.80
+    n_min: 48
+    n_max: 128
+    emp_ci_method: auto                # phương pháp CI đã hiệu chuẩn ở budget2-audit (nếu có), ngược lại bootstrap-t
+  sets: [del_sq]
+  incumbent: {family: spi, alpha: 1, N: 32}
+  controls:
+    - {family: spi, alpha: 0.1, N: 64}
+    - {family: spi, alpha: 10, N: 64}  # nối mạch E10 / BUDGET
+  grid: {alphas: [0.1, 0.3, 1, 3, 10], N: 32, families: [spi, ln, cmix], smooth_delta: [0.5, 0.674, 1.0]}
+  primary_families: [ln, cmix]
+  descriptive_families: [smooth, spi]
+  dev: {split: fresh, offset: 1200, n_images: 32, m: 16}
+  test:
+    split: fresh
+    offset: 1300
+    m: 32
+    sets: [del_sq, ins_sq, sym_sq, frac25, frac50, frac75, del_sq_blur, del_sp]
+    external: true
+    road: {fracs: [0.1, 0.3, 0.5, 0.7, 0.9], noise: 0.01, iters: 1000, tol: 1.0e-5}
+    insdel_steps: 50
+    pointing_tol: 15
+    top_frac: 0.05
+  gpu_minutes: {dev: 240, test: 300}
+  per_eval_seconds: null               # ví dụ 0.003 (đo bằng bench) để pathfam-plan quy gradient ra phút
 
 debug:
   paths:
@@ -307,6 +369,15 @@ debug:
     test: {n_images: 2, m: 4, baseline: {family: spi, alpha: 10, N: 8}, prior: {family: spi, alpha: 0.1, N: 8},
            sets: [del_sq, ins_sq, del_sp], ig_N: 8, ig_repeats: 8, insdel_steps: 10, road: {fracs: [0.2, 0.8], iters: 200}}
     gpu_minutes: {dev1: null, dev2: null, test: null}
+  pathfam:
+    protocol: {budgets: [32, 64], budgets_secondary: [16], Ks: [2, 4, 8], check_K: [4], bootstrap: 200, n_min: 2, n_max: 3,
+               floor_lams: [0.0, 1.0e-2], floor_folds: 2}
+    incumbent: {family: spi, alpha: 1, N: 4}
+    controls: [{family: spi, alpha: 10, N: 8}]
+    grid: {alphas: [1, 10], N: 4, families: [spi, ln, cmix], smooth_delta: [0.674]}
+    dev: {n_images: 2, m: 4}
+    test: {m: 4, sets: [del_sq, ins_sq, del_sp], insdel_steps: 10, road: {fracs: [0.2, 0.8], iters: 200}}
+    gpu_minutes: {dev: null, test: null}
   budget2:
     protocol: {budgets: [32, 64, 128], Ks: [2, 4, 8], check_K: [4], branchA_budgets: [32, 64], primary_budget: 32,
                branchB_budgets: [128], gate_min_gain: -1.0e9, gate_min_prob: 0.0, n_min: 2, n_max: 3, bootstrap: 200,

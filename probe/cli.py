@@ -35,6 +35,13 @@ Vòng BUDGET2 (mục budget2:, docs/PROTOCOL_BUDGET2.md; kết quả infid/budge
   budget2-report           dựng lại INFID_BUDGET2_REPORT.md
   budget2-audit            kiểm toán dev-only (không GPU): cổng g > 0 vs g > δ, cross-fit, kiểm J + mô phỏng độ phủ → INFID_BUDGET2_AUDIT.md
   budget2-freeze           đóng băng BUDGET2 dev-only → budget2/FROZEN.json; chặn budget2-lock / budget2-test
+PATH_FAMILIES (docs/PATH_FAMILIES_AUDIT.md, docs/PATH_FAMILIES_PROTOCOL.md):
+  pathfam-audit            Phase 0, CPU: tính chất 4 họ đường (dp, ln, cmix, smooth), toy Mệnh đề bậc ≤ 3/4/5, phân tích lại E10
+                           → infid/pathfam/PATH_FAMILIES_CHECKS.md
+  pathfam-plan             CPU: kế hoạch cuối + kiểm toán chi phí gradient (pipeline thật, hàm giả) → infid/pathfam/PATHFAM_PLAN.md
+  pathfam-dev              Phase 1 dev: 20 cấu hình × 32 ảnh mới; chọn θ*_F theo J_rev; lực NI → infid/pathfam/selection_dev.json
+  pathfam-lock             khoá lựa chọn, kiểm định, n test (từ lực dev) → infid/pathfam/pathfam_prereg.json
+  pathfam-test             Phase 1 test (cần khoá) → infid/INFID_PATHFAM_REPORT.md;  pathfam-report: dựng lại báo cáo
 Chạy lại sẽ bỏ qua phần đã có trong cache (cùng hash config).
 """
 
@@ -48,7 +55,8 @@ CMDS = ["toy", "toy-large", "toy-report", "pathscore", "pathscore-report", "path
         "quad-check", "quad-check-report", "sampling-infid-pilot", "infid-lock", "sampling-infid-e1a", "sampling-infid-e1b-dev",
         "sampling-infid-e1b-test", "sampling-infid-e2", "sampling-infid-report", "infid-posthoc", "infid-freeze",
         "budget-dev1", "budget-dev2", "budget-lock", "budget-test", "budget-report", "budget-audit",
-        "budget2-dev", "budget2-lock", "budget2-test", "budget2-report", "budget2-audit", "budget2-freeze"]
+        "budget2-dev", "budget2-lock", "budget2-test", "budget2-report", "budget2-audit", "budget2-freeze",
+        "pathfam-audit", "pathfam-plan", "pathfam-dev", "pathfam-lock", "pathfam-test", "pathfam-report"]
 
 
 def main(argv=None) -> None:
@@ -95,6 +103,19 @@ def main(argv=None) -> None:
     elif cmd == "budget-audit":
         from . import budget_audit as BA
         BA.run(cfg)
+    elif cmd == "pathfam-audit":
+        from . import path_families as PF
+        PF.run(cfg)
+    elif cmd.startswith("pathfam-"):
+        from . import pathfam as PFM
+        if cmd == "pathfam-plan":
+            PFM.plan(cfg)
+        elif cmd == "pathfam-lock":
+            PFM.lock(cfg)
+        elif cmd == "pathfam-report":
+            PFM.write_report(cfg)
+        else:
+            PFM.run(ctx(), cmd[len("pathfam-"):])
     elif cmd in ("budget2-audit", "budget2-freeze"):
         from . import budget2_audit as B2A
         (B2A.run if cmd == "budget2-audit" else B2A.freeze)(cfg)

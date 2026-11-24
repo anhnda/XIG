@@ -71,11 +71,14 @@ def selection_path(cfg: dict) -> str:
 
 def norm_conf(c: dict) -> dict:
     f = c.get("family", "spi")
-    if f not in ("spi", "patch", "hier", "ig"):
+    if f not in ("spi", "patch", "hier", "ig", "ln", "cmix", "smooth"):
         raise SystemExit(f"họ đường không biết: {f}")
     out = {"family": f, "N": int(c.get("N", 64))}
+    if f == "smooth":
+        out["delta"] = float(c["delta"])
+        return out
     if f != "ig":
-        out["alpha"] = float(c["alpha"])
+        out["alpha"] = float(c["alpha"])          # ln / cmix: α khớp exploration (σ hiệu chuẩn, λ = 1/(α + 1))
     if f in ("patch", "hier"):
         out["G"] = int(c.get("G", 7))
     if f == "hier":
@@ -87,6 +90,8 @@ def cname(c: dict) -> str:
     c = norm_conf(c)
     if c["family"] == "ig":
         return f"ig_N{c['N']}"
+    if c["family"] == "smooth":
+        return f"smooth_d{c['delta']:g}_N{c['N']}"
     s = f"{c['family']}_a{c['alpha']:g}_N{c['N']}"
     if c["family"] in ("patch", "hier"):
         s += f"_G{c['G']}"
@@ -128,6 +133,9 @@ class PathGen:
         key = (self.tag, self.name, E.image, int(j))
         if c["family"] == "spi":
             return SM.spi_schedule(c["alpha"], c["N"], E.shape, E.gen("INFspi", *key))
+        if c["family"] in ("ln", "cmix", "smooth"):
+            from . import path_families as PF
+            return PF.schedule(c["family"], c["N"], E.shape, E.gen("INF" + c["family"], *key), PF.family_params(c))
         P = c["G"] * c["G"]
         phi = torch.rand(P, generator=E.cgen("INFphi", *key), dtype=F64)              # thiết kế indep: pha iid U(0,1)
         Zp = SM.expand_patch(SM.patch_schedule(c["alpha"], c["N"], phi, E.gen("INFpat", *key)), self.lab, E.shape)

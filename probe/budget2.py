@@ -58,6 +58,7 @@ DEFAULT2 = {
              "road": {"fracs": [0.1, 0.3, 0.5, 0.7, 0.9], "noise": 0.01, "iters": 1000, "tol": 1.0e-5},
              "insdel_steps": 50, "pointing_tol": 15, "top_frac": 0.05},
     "gpu_minutes": {"dev": None, "test": None},
+    "audit": {"sim_reps": 2000, "sim_boot": 2000, "sim_cells": 64, "scenarios": None},
 }
 
 
