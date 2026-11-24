@@ -104,6 +104,16 @@ bash scripts/run.sh pathfam-test        # test → runs_probe/pilot/infid/INFID_
 bash scripts/run.sh pathfam-verify   # tính lại J, g, NI / sup / TOST, Holm từ pairs.csv bằng mã riêng; kiểm khoá → pathfam/PATHFAM_VERIFY.md
 bash scripts/run.sh pathfam-diag     # J ↔ metric ngoài (mức B và mức μ), smooth → pathfam/PATHFAM_J_VS_EXTERNAL.md
 bash scripts/run.sh pathfam-theory   # kiểm số Phase 2 → pathfam/PATH_FAMILIES_THEORY_CHECKS.md (lý thuyết: docs/PATH_FAMILIES_THEORY.md)
+bash scripts/run.sh pathfam-proofcheck  # kiểm toán chứng minh (sympy + MC) → pathfam/PATH_FAMILIES_PROOF_CHECKS.md (docs/PATH_FAMILIES_THEORY_AUDIT.md)
+bash scripts/run.sh pathfam-signdiag    # GPU, hậu kiểm có dấu / không dấu trên ảnh test đã khoá → pathfam/PATHFAM_SIGNED_UNSIGNED.md
 bash scripts/run.sh pathfam-freeze   # CHẠY CUỐI: sha256 mọi artifact + seed + σ → pathfam/FROZEN.json; chặn pathfam-dev / lock / test
 ```
-Kiểm thử: `pytest tests/` 81 passed (gồm kiểm tích hợp verify / diag / freeze trên dữ liệu tổng hợp và kiểm số các định lý Phase 2).
+Kiểm thử: `pytest tests/` 86 passed (gồm kiểm tích hợp verify / diag / freeze / signdiag-report trên dữ liệu tổng hợp, kiểm số và kiểm
+symbolic các định lý Phase 2).
+
+**pathfam-signdiag** (hậu kiểm, mô tả, không chọn lại): dựng lại bản đồ của các cấu hình test đã khoá trên chính các ảnh test đã khoá
+(luồng ngẫu nhiên riêng `pfsd`; m = 16 cặp ⇒ bản đồ ở K của B = 256 / 1024 và Ē của 32 đường). Chi phí ≈ Σ_cấu hình 2·m·N gradient / ảnh
+(≈ 8 cấu hình × 32 × ≤ 64 ≈ 11–16 nghìn / ảnh) + 2 × InsDel (chỉ forward); trần `pathfam.signdiag.gpu_minutes` = 180. Giả thuyết đặt trước
+**H-SU**: metric xếp hạng CÓ DẤU (InsDel có dấu, năng lượng A⁺ trong mask, IoU theo A⁺) đồng thuận với J nhiều hơn metric KHÔNG DẤU
+tương ứng (so cặp τ theo ảnh). Đo kèm completeness thực nghiệm, tỷ lệ triệt tiêu ‖A‖₁/|ΣA|, khối lượng âm, triệt tiêu giữa kênh,
+infid_β (thang đo tối ưu).

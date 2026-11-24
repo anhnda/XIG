@@ -7,8 +7,9 @@ attribution kỳ vọng μ_Q và phương sai, và do đó J? Không giả đị
 
 ## 0. Thiết lập
 
-Feature i = 1..d (pixel × kênh). Lịch trình Z: [0, 1] → [0, 1]^d, mỗi tọa độ không giảm, Z(0) = 0, Z(1) = 1, biến phân bị chặn (đường lưới
-nội suy tuyến tính thoả). Đường γ = x′ + Δ ⊙ Z, Δ = x − x′. Attribution theo đường
+Feature i = 1..d (pixel × kênh). Lịch trình Z: [0, 1] → [0, 1]^d, mỗi tọa độ không giảm và **liên tục**, Z(0) = 0, Z(1) = 1 (đường lưới
+nội suy tuyến tính thoả; bước nhảy của cmix / DP α nhỏ nằm trọn trong một đoạn nên vẫn liên tục). Liên tục là đủ cho mọi phép tích phân
+từng phần và quy tắc dây chuyền Z^s dZ = d(Z^{s+1})/(s + 1) dưới đây; không cần liên tục tuyệt đối. Đường γ = x′ + Δ ⊙ Z, Δ = x − x′. Attribution theo đường
   A_i(Z) = Δ_i ∫₀¹ ∂_iF(γ(t)) dZ_i(t)   (tích phân Riemann–Stieltjes).
 Q là phân phối của Z; μ_Q = E_Q A(Z). Ước lượng: K đường, mỗi đường cầu phương `rand` (N đoạn, M điểm): E[Â | Z] = A(Z) (đã chứng minh ở P0).
 Với chi phí N·M gradient / đường và ngân sách B: K = B/(NM) và
@@ -54,32 +55,45 @@ bất biến; `power` có |E 𝔄| = 0,36 và ‖E A − IG‖ = 0,35 (khớp H�
   M_{a,i}(Q) = (1/(a_i + 1)) ∫₀¹ Π_{j≠i} m_{j,a_j}(t) d m_{i,a_i+1}(t).
 Do đó với F bậc ≤ p, μ_Q chỉ phụ thuộc các **đường moment biên** m_{j,r}, r ≤ p.
 
-*Chứng minh.* Z_i^{a_i} dZ_i = d(Z_i^{a_i+1})/(a_i + 1) (Z_i liên tục tuyệt đối). Điều kiện theo các tọa độ khác, G(t) = Π_{j≠i} Z_j(t)^{a_j}
+*Chứng minh.* Z_i^{a_i} dZ_i = d(Z_i^{a_i+1})/(a_i + 1) (Z_i liên tục, đơn điệu). Điều kiện theo các tọa độ khác, G(t) = Π_{j≠i} Z_j(t)^{a_j}
 không âm, không giảm, bị chặn; tích phân từng phần cho E[∫G dW | G] = ∫ G d(E W) với W = Z_i^{a_i+1} độc lập với G; rồi lấy kỳ vọng theo G
 (Fubini): E G(t) = Π m_{j,a_j}(t). ∎
 
-Với v(t) = Var Z(t), κ₃, κ₄ là cumulant bậc 3, 4 của Z(t), D = ∫ v, cùng phân phối cho mọi feature và E Z = t:
+Với v(t) = Var Z(t), κ₃, κ₄ là cumulant bậc 3, 4 của Z(t), D = ∫ v, cùng phân phối cho mọi feature và E Z = t (nếu phân phối khác nhau giữa
+feature, thay D bằng D_j của đúng feature xuất hiện trong mẫu chỉ số — chứng minh không đổi):
 
 **[Hệ quả 3a]** bậc ≤ 2: μ = IG. Bậc 3: μ chỉ phụ thuộc Q qua **D** (các số hạng: 1/3, 1/3 + D, 1/3 − D/2, 1/3).
 **[Hệ quả 3b]** bậc 4: qua D, ∫ t v và ∫ κ₃; nếu bất biến khi đảo (v đối xứng, κ₃ phản đối xứng quanh ½) thì **chỉ qua D**
-(bảy mẫu chỉ số liệt kê trong PATH_FAMILIES_AUDIT.md §5.1).
+(bảy mẫu chỉ số liệt kê trong PATH_FAMILIES_AUDIT.md §5.1). **[Kiểm toán]** sympy tính TRỰC TIẾP 4 mẫu bậc 3 và 7 mẫu bậc 4 trên họ warp
+lệch không bất biến khi đảo (∫tv = 1/560 ≠ D/2 = 1/420, ∫κ₃ = 1/3360 ≠ 0): hiệu với công thức đúng bằng 0 (`pathfam-proofcheck` S1–S3).
 **[Hệ quả 3c]** bậc 5: xuất hiện ∫ v², ∫ t² v, ∫ t κ₃, ∫ κ₄ — không còn xác định bởi D, kể cả khi khớp toàn bộ hàm hiệp phương sai.
 **[Kiểm số]** bậc 3, 4: E A_f − A_IG = D_f · a₁ với cùng a₁ cho 6 họ / tham số, |z| ≤ 2,5. Bậc 5 có chủ đích F = x₀(x₁ − ½)⁴: dp α = 1 và
 cmix λ = ½ (cùng D, cùng c(s, t)) khác nhau z = 31; ln khác dp z = −9,6.
 
-*Diễn giải kích hoạt.* Khi h → 1, Z_i(t) → 1{t ≥ U_i} với U_i độc lập đều: S_{e_j,i} = 1{U_j < U_i} (thứ tự kích hoạt), và A là giá trị
-Shapley của trò chơi "bật feature theo thứ tự ngẫu nhiên" quanh x′. Trên lưới N đoạn, các feature nhảy trong cùng một đoạn đi theo đường
-thẳng với nhau ⇒ "Shapley theo khối" với N khối. h nội suy giữa IG (h = 0) và Shapley theo khối (h = 1); D đo vị trí trên trục đó.
+**[Mệnh đề 3d — giới hạn kích hoạt]** Nếu mỗi tọa độ nhảy trọn 0 → 1 trong một khoảng thời gian riêng, các khoảng của các feature rời
+nhau hầu chắc chắn và thứ tự nhảy là hoán vị đều (ví dụ thời điểm nhảy độc lập, liên tục, cùng phân phối), thì với MỌI F khả vi (không cần đa
+thức): E A_i = giá trị Shapley của trò chơi v(S) = F(x′ + Δ⊙1_S). *Chứng minh.* Trong khoảng nhảy của i chỉ tọa độ i chuyển động nên
+A_i = F(sau) − F(trước) (định lý gradient trên đoạn), tức đóng góp biên của i vào tập các feature đã nhảy; lấy kỳ vọng theo hoán vị đều. ∎
+Trên lưới N đoạn, các feature nhảy CÙNG một đoạn đi thẳng cùng nhau ⇒ "Shapley theo khối" (xác suất đụng độ ≈ d²/(2N) mỗi cặp — với
+d ≈ 1,5·10⁵ phần tử ảnh và N = 32 thì đụng độ là chuẩn, nên ở ảnh thật h = 1 là Shapley theo N khối, không phải Shapley). h nội suy giữa
+IG (h = 0) và Shapley theo khối (h = 1). **[Kiểm số]** λ = 1, N = 4096, d = 4, F bậc 3: |z| ≤ 1,6 so với Shapley chính xác.
 
 ## 4. Phương sai: cần nhiều hơn D
 
 **[Định lý 4]** Feature độc lập, cùng phân phối, E Z = t, F bậc 2. Với c(s, t) = Cov(Z(s), Z(t)), Γ = ∬ c, Λ = ∬ c d²c (độ đo
 Lebesgue–Stieltjes của ∂²c/∂s∂t), các moment bậc hai của {S_{e_j,i}} là hàm song tuyến tính của c:
-  Var S_{e_j,i} = 2Γ + Λ;  Cov(S_{e_j,i}, S_{e_k,i}) = Cov(S_{e_j,i}, S_{e_j,l}) = Γ;  Cov(S_{e_j,i}, S_{e_i,l}) = −Γ;  S_{e_i,j} = 1 − S_{e_j,i};
-các cặp bốn chỉ số khác nhau: 0. Do đó Cov_Q(A) bậc 2 chỉ phụ thuộc Q qua **hàm hiệp phương sai c** — một hàm hai biến, không phải số D.
+  Var S_{e_j,i} = 2Γ + Λ;
+  Cov(S_{e_j,i}, S_{e_k,i}) = Γ (chung integrator);  Cov(S_{e_j,i}, S_{e_j,l}) = Γ (chung integrand);
+  Cov(S_{e_j,i}, S_{e_i,l}) = −Γ (integrator của cái này là integrand của cái kia);  Cov(S_{e_j,i}, S_{e_l,j}) = −Γ (ngược lại);
+  Cov(S_{e_j,i}, S_{e_i,j}) = −(2Γ + Λ) (vì S_{e_i,j} = 1 − S_{e_j,i});  bốn chỉ số khác nhau: 0.
+Đây là MỌI kiểu chồng chỉ số giữa hai cặp (j, i), (k, l). Do đó Cov_Q(A) bậc 2 chỉ phụ thuộc Q qua **hàm hiệp phương sai c** — một hàm
+hai biến, không phải số D. Đồng nhất thức hữu ích: Γ = ∬c = Var ∫₀¹ Z(t) dt.
 
 *Chứng minh (Var).* E(∫Z_j dZ_i)² = ∬ E[Z_j(s)Z_j(t)] d²E[Z_i(s)Z_i(t)] = ∬ (st + c) d²(st + c); khai triển bốn số hạng: ¼, Γ, Γ (tích phân từng
-phần hai lần, c triệt tiêu ở biên), Λ. Các hiệp phương sai còn lại tính tương tự. ∎
+phần hai lần, c triệt tiêu ở biên s, t ∈ {0, 1}), Λ. Các hiệp phương sai còn lại: điều kiện theo feature chung, dùng E Z = t cho feature
+không chung và tích phân từng phần một lần (ví dụ (j,i) & (l,j): ∬ t ∂_t R_j = ∫R_j(s, 1) ds − ∬R_j = ¼ − Γ với R_j = st + c). ∎
+**[Kiểm toán]** sympy kiểm chính xác cả 7 kiểu trên họ hạng 2 có Λ ≠ 0; Monte Carlo trên dp lưới (c có khối lượng đường chéo) khớp ±Γ̂ trong
+nhiễu (`pathfam-proofcheck` S4, M1).
 
 | Họ | c(s, t), s ≤ t | Γ | Λ | Var S_{e_j,i} |
 |---|---|---|---|---|
@@ -111,6 +125,7 @@ phần hai lần, c triệt tiêu ở biên), Λ. Các hiệp phương sai còn 
 | μ_Q | 3 (độc lập, E Z = t) | D | Định lý |
 | μ_Q | 4 (+ bất biến khi đảo) | D | Định lý |
 | μ_Q | 5 | thêm ∫ v², ∫ κ₄, … | Định lý + phản ví dụ số |
+| μ_Q | mọi F, luật nhảy thứ tự đều | giá trị Shapley (theo khối trên lưới) | Mệnh đề 3d |
 | Cov_Q A | 2 (độc lập) | hàm hiệp phương sai c(s, t) | Định lý |
 | Cov_Q A | ≥ 3 | moment bậc 4 của đường | Kiểm số |
 | V_e (`rev`) | 2 | 0 với mọi Q | Định lý |

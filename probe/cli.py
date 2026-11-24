@@ -45,6 +45,8 @@ PATH_FAMILIES (docs/PATH_FAMILIES_AUDIT.md, docs/PATH_FAMILIES_PROTOCOL.md):
   pathfam-verify           CPU: kiểm toán độc lập từ pairs.csv (J, g, NI / sup / TOST, Holm, khoá) → infid/pathfam/PATHFAM_VERIFY.md
   pathfam-diag             CPU: J ↔ metric ngoài (Kendall τ theo ảnh, mức B và mức μ, smooth) → infid/pathfam/PATHFAM_J_VS_EXTERNAL.md
   pathfam-theory           CPU: kiểm số định lý Phase 2 (diện tích Lévy, rev chính xác bậc 2, phương sai) → infid/pathfam/PATH_FAMILIES_THEORY_CHECKS.md
+  pathfam-proofcheck       CPU: kiểm toán chứng minh Phase 2 (sympy + Monte Carlo) → infid/pathfam/PATH_FAMILIES_PROOF_CHECKS.md
+  pathfam-signdiag         GPU, hậu kiểm: chẩn đoán có dấu / không dấu trên ảnh test đã khoá → infid/pathfam/PATHFAM_SIGNED_UNSIGNED.md
   pathfam-freeze           đóng băng PATHFAM (sha256 artifact, seed, σ) → infid/pathfam/FROZEN.json; chặn dev / lock / test
 Chạy lại sẽ bỏ qua phần đã có trong cache (cùng hash config).
 """
@@ -61,7 +63,8 @@ CMDS = ["toy", "toy-large", "toy-report", "pathscore", "pathscore-report", "path
         "budget-dev1", "budget-dev2", "budget-lock", "budget-test", "budget-report", "budget-audit",
         "budget2-dev", "budget2-lock", "budget2-test", "budget2-report", "budget2-audit", "budget2-freeze",
         "pathfam-audit", "pathfam-plan", "pathfam-dev", "pathfam-lock", "pathfam-test", "pathfam-report",
-        "pathfam-verify", "pathfam-diag", "pathfam-theory", "pathfam-freeze"]
+        "pathfam-verify", "pathfam-diag", "pathfam-theory", "pathfam-freeze",
+        "pathfam-proofcheck", "pathfam-signdiag", "pathfam-signdiag-report"]
 
 
 def main(argv=None) -> None:
@@ -117,6 +120,12 @@ def main(argv=None) -> None:
     elif cmd == "pathfam-theory":
         from . import path_theory as PT
         PT.run(cfg)
+    elif cmd == "pathfam-proofcheck":
+        from . import proof_check as PCK
+        PCK.run(cfg)
+    elif cmd in ("pathfam-signdiag", "pathfam-signdiag-report"):
+        from . import signdiag as SD
+        SD.run(ctx()) if cmd == "pathfam-signdiag" else SD.report(cfg)
     elif cmd.startswith("pathfam-"):
         from . import pathfam as PFM
         if cmd == "pathfam-plan":

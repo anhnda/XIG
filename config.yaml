@@ -335,6 +335,12 @@ pathfam:
     top_frac: 0.05
   gpu_minutes: {dev: 240, test: 300}
   per_eval_seconds: null               # ví dụ 0.003 (đo bằng bench) để pathfam-plan quy gradient ra phút
+  signdiag:                            # pathfam-signdiag (GPU, hậu kiểm trên ảnh test đã khoá; mô tả, không chọn lại)
+    m: 16                              # cặp mỗi cấu hình (đủ cho K = 32 ở B = 1024, N = 32)
+    budgets: [256, 1024]
+    insdel_steps: 50
+    n_images: null                     # null = mọi ảnh test đã khoá
+    gpu_minutes: 180
 
 debug:
   paths:
@@ -378,6 +384,7 @@ debug:
     dev: {n_images: 2, m: 4}
     test: {m: 4, sets: [del_sq, ins_sq, del_sp], insdel_steps: 10, road: {fracs: [0.2, 0.8], iters: 200}}
     gpu_minutes: {dev: null, test: null}
+    signdiag: {m: 4, budgets: [32], insdel_steps: 10, n_images: 2, gpu_minutes: null}
   budget2:
     protocol: {budgets: [32, 64, 128], Ks: [2, 4, 8], check_K: [4], branchA_budgets: [32, 64], primary_budget: 32,
                branchB_budgets: [128], gate_min_gain: -1.0e9, gate_min_prob: 0.0, n_min: 2, n_max: 3, bootstrap: 200,
