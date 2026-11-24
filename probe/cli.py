@@ -33,6 +33,8 @@ Vòng BUDGET2 (mục budget2:, docs/PROTOCOL_BUDGET2.md; kết quả infid/budge
   budget2-lock             khoá cổng, ngân sách được kiểm, cỡ mẫu test (từ SD theo cặp trên dev)
   budget2-test             kiểm định trên ảnh mới — cần khoá
   budget2-report           dựng lại INFID_BUDGET2_REPORT.md
+  budget2-audit            kiểm toán dev-only (không GPU): cổng g > 0 vs g > δ, cross-fit, kiểm J + mô phỏng độ phủ → INFID_BUDGET2_AUDIT.md
+  budget2-freeze           đóng băng BUDGET2 dev-only → budget2/FROZEN.json; chặn budget2-lock / budget2-test
 Chạy lại sẽ bỏ qua phần đã có trong cache (cùng hash config).
 """
 
@@ -46,7 +48,7 @@ CMDS = ["toy", "toy-large", "toy-report", "pathscore", "pathscore-report", "path
         "quad-check", "quad-check-report", "sampling-infid-pilot", "infid-lock", "sampling-infid-e1a", "sampling-infid-e1b-dev",
         "sampling-infid-e1b-test", "sampling-infid-e2", "sampling-infid-report", "infid-posthoc", "infid-freeze",
         "budget-dev1", "budget-dev2", "budget-lock", "budget-test", "budget-report", "budget-audit",
-        "budget2-dev", "budget2-lock", "budget2-test", "budget2-report"]
+        "budget2-dev", "budget2-lock", "budget2-test", "budget2-report", "budget2-audit", "budget2-freeze"]
 
 
 def main(argv=None) -> None:
@@ -93,6 +95,9 @@ def main(argv=None) -> None:
     elif cmd == "budget-audit":
         from . import budget_audit as BA
         BA.run(cfg)
+    elif cmd in ("budget2-audit", "budget2-freeze"):
+        from . import budget2_audit as B2A
+        (B2A.run if cmd == "budget2-audit" else B2A.freeze)(cfg)
     elif cmd.startswith("budget2-"):
         from . import budget2 as B2
         if cmd == "budget2-lock":

@@ -91,3 +91,58 @@ def test_dev_configs_dedup():
     assert "spi_a1_N32" in names and "spi_a0.1_N64" in names
     assert sum(n.startswith("hier_") for n in names) == 6
     assert sum(n.startswith("spi_") for n in names) == 10   # 3 α × 3 N + α = 0,1 N = 64 (incumbent nằm trong lưới)
+
+
+# ── budget2-audit ────────────────────────────────────────────────────────────
+
+from probe import budget2_audit as B2A  # noqa: E402
+from probe import budget_opt as BO  # noqa: E402
+from probe import infid_core as IC  # noqa: E402
+
+
+def test_gain_stats_separates_zero_and_delta():
+    rng = np.random.default_rng(5)
+    jr = rng.lognormal(2.4, 0.3, 32)
+    jc = 0.94 * jr + rng.normal(0, 0.3, 32)                # g ≈ 6 %: rõ > 0, sát δ = 5 %
+    st = B2A.gain_stats(jr, jc, 0.05, 2000, 1, 0.05)
+    assert st["P_g_gt_0"] > st["P_g_gt_delta"]
+    assert st["p_bt_0"] < st["p_bt_delta"]
+    assert st["n_req_0"] < st["n_req_delta"]
+    lo, hi = st["g_ci_fieller"]
+    assert lo < st["g"] < hi
+
+
+def test_crossfit_removes_selection_optimism():
+    rng = np.random.default_rng(7)
+    n, k = 40, 8
+    base = rng.lognormal(2.4, 0.3, (n, 1))
+    Ws = base + rng.normal(0, 1.0, (n, k + 1))              # mọi ứng viên bằng nhau về kỳ vọng
+    We = base + rng.normal(0, 1.0, (n, k + 1))
+    chal = list(range(1, k + 1))
+    g_naive = max((Ws[:, 0].mean() - Ws[:, c].mean()) / Ws[:, 0].mean() for c in chal)
+    cf = B2A.crossfit(Ws, We, 0, chal, None, 200, 3)
+    assert g_naive > 0 and abs(cf["g_mean"]) < g_naive
+    sb = B2A.selection_boot(Ws, 0, chal, None, 500, 3)
+    assert sb["g_mean"] > 0                                  # chọn trong mẫu ⇒ lạc quan
+
+
+def test_empirical_rev_identity():
+    """TB_g infid(Ē_g) = L(Ē) + TB_g‖Ē_g − Ē‖²/‖d‖² khi các nhóm phủ hết m cặp (cơ sở của tính không chệch)."""
+    import torch
+    g = torch.Generator().manual_seed(0)
+    m, n, K = 16, 32, 8
+    y1 = torch.randn(m, n, generator=g, dtype=torch.float64)
+    y2 = torch.randn(m, n, generator=g, dtype=torch.float64)
+    d = torch.randn(n, generator=g, dtype=torch.float64)
+    em = BO.empirical_J(y1, y2, d, [K])["Jemp_rev_8"]
+    E = (y1 + y2) / 2
+    Eg = E.view(m // (K // 2), K // 2, n).mean(1)
+    Eb = E.mean(0)
+    rhs = float(IC.infid(Eb[None], d)[0] + ((Eg - Eb) ** 2).sum(1).mean() / (d * d).sum())
+    assert em == pytest.approx(rhs, rel=1e-10)
+
+
+def test_sim_coverage_runs_small():
+    rows = B2A.sim_coverage(n_img=6, m=8, Ks=[4], n_cells=16, reps=3, n_boot=100, seed=1)
+    assert {r["coupling"] for r in rows} == {"indep", "rev"}
+    assert all(0 <= r["độ phủ thực"] <= 1 for r in rows)

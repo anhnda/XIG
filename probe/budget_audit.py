@@ -266,7 +266,7 @@ def r_section(cfg: dict) -> list:
 # (3) kiểm J thực nghiệm
 # ─────────────────────────────────────────────────────────────────────────────
 
-def emp_section(cfg: dict) -> list:
+def emp_section(cfg: dict, stages=("dev1", "dev2", "test")) -> list:
     import pandas as pd
     from .report import md
     pr = BO.bpr(cfg)
@@ -280,7 +280,7 @@ def emp_section(cfg: dict) -> list:
          "tách: sai khác tuyệt đối, tương đối theo J và theo số hạng phương sai V_K (thang đo đúng của phép kiểm), skew, tỷ lệ ảnh "
          "dương, Holm trong mỗi giai đoạn, và lặp lại trên hai nửa ảnh rời nhau (ảnh chẵn / lẻ theo thứ tự).\n"]
     pooled = []
-    for stage in ("dev1", "dev2", "test"):
+    for stage in stages:
         em, p = BO._read(stage, "emp", cfg), BO._read(stage, "pairs", cfg)
         if em is None or p is None:
             continue

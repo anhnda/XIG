@@ -244,7 +244,15 @@ def d_cfg(cfg: dict) -> dict:
     return icfg(cfg)["D"]
 
 
+def check_frozen(cfg: dict) -> None:
+    fz = os.path.join(root(cfg), "FROZEN.json")
+    if os.path.exists(fz) and not cfg.get("_debug"):
+        raise SystemExit(f"BUDGET2 đã đóng băng dev-only ({fz}); tập test được giữ lại. Muốn mở test phải có quyết định mới, ghi vào "
+                         "docs/PROTOCOL_BUDGET2.md, rồi mới xoá / chuyển FROZEN.json")
+
+
 def lock(cfg: dict) -> None:
+    check_frozen(cfg)
     sel = load_sel(cfg)
     if not tested_budgets(cfg, sel):
         raise SystemExit("không ngân sách nào trong budget2.test.budgets qua cổng dev — incumbent giữ nguyên; không khoá / không test")
@@ -265,6 +273,7 @@ def run(ctx, stage: str) -> None:
     v = view(cfg)
     if stage not in STAGES:
         raise SystemExit(stage)
+    check_frozen(cfg)
     if stage == "test":
         if not cfg["_debug"] and not os.path.exists(lock_path(cfg)):
             raise SystemExit(f"budget2-test cần khoá: bash scripts/run.sh budget2-lock (chưa thấy {lock_path(cfg)})")

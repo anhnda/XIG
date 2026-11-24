@@ -62,3 +62,20 @@ So với α = 0,1 và incumbent ở cùng B; độ bền theo 8 D cho J ở B v�
 
 `budget2.gpu_minutes`: dev 300, test 300 phút. Ước tính dev ≈ 39 400 gradient / ảnh (nhánh A 10 752, α = 0,1 N = 64 4 096,
 nhánh B 24 576) × 32 ảnh.
+
+## 7. Kết quả dev và quyết định (ghi sau khi xem dev, trước mọi ảnh test)
+
+| B | nhánh | ứng viên tốt nhất | giảm J (bộ chọn) | P_boot(tốt hơn) | cổng |
+|---|---|---|---|---|---|
+| 256 | A | SPI α = 0,3, N = 32 | −10,6 % | 0,231 | không qua |
+| 1024 | A | SPI α = 0,1, N = 64 | +2,2 % | 0,615 | không qua |
+| 2048 | B | hier α = 0,3, G = 14, η = 0,75 | +3,2 % | 0,625 | không qua |
+| 4096 | B | hier α = 0,1, G = 14, η = 0,75 | +6,8 % | 0,807 | qua (sát ngưỡng) |
+
+Quyết định (theo phản biện):
+1. Incumbent SPI α = 1, N = 32, `rev` giữ nguyên ở B = 256 và 1024. Nhánh A đóng, không test.
+2. Nhánh B ở B = 4096 là **ứng viên thăm dò**, không phải nghiệm mới. Không đổi ngưỡng δ = 5 % sau khi xem dữ liệu.
+3. Kiểm toán cổng (`budget2-audit`): tách P(g > 0) khỏi P(g > δ), CI của ΔJ / g, cross-fit theo ảnh để trừ hiệu ứng chọn;
+   kiểm J thực nghiệm + mô phỏng độ phủ của chính quy trình CI.
+4. Đóng băng BUDGET2 dev-only (`budget2-freeze`); tập test fresh 1000– được giữ lại. Mở lại chỉ khi có ứng viên mạnh hơn và quyết định
+   mới được ghi vào đây trước.
