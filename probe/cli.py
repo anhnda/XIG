@@ -20,6 +20,7 @@ Proposal "Lấy mẫu đường SPI theo infidelity" (mục infid:, kết quả 
   sampling-infid-report    dựng lại infid/INFID_SAMPLING_REPORT.md từ CSV
   infid-posthoc            kiểm toán sau kiểm định (không GPU): H3b, E2 theo cặp, metric ngoài, J(K), độ nhạy C_D
                            → infid/INFID_POSTHOC_REPORT.md
+  infid-freeze             đóng băng: sha256 mọi CSV / báo cáo / khoá / config / mã nguồn → infid/FROZEN.json
 Chạy lại sẽ bỏ qua phần đã có trong cache (cùng hash config).
 """
 
@@ -31,7 +32,7 @@ from . import config as C
 
 CMDS = ["toy", "toy-large", "toy-report", "pathscore", "pathscore-report", "pathscore-infid-decomp", "pathscore-infid-report",
         "quad-check", "quad-check-report", "sampling-infid-pilot", "infid-lock", "sampling-infid-e1a", "sampling-infid-e1b-dev",
-        "sampling-infid-e1b-test", "sampling-infid-e2", "sampling-infid-report", "infid-posthoc"]
+        "sampling-infid-e1b-test", "sampling-infid-e2", "sampling-infid-report", "infid-posthoc", "infid-freeze"]
 
 
 def main(argv=None) -> None:
@@ -72,6 +73,9 @@ def main(argv=None) -> None:
     elif cmd == "infid-posthoc":
         from . import infid_posthoc as PH
         PH.run(cfg)
+    elif cmd == "infid-freeze":
+        from . import infid_posthoc as PH
+        PH.freeze(cfg)
     elif cmd == "sampling-infid-report":
         from . import sampling_infid as SI
         SI.write_report(cfg)

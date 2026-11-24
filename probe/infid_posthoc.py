@@ -85,24 +85,32 @@ def sec_A(cfg, chosen: str, base: str, B: int, seed: int, al: float) -> list:
         L.append("Nguyên nhân: σ̂²/r (phương sai quadrature của IG ở N = 64 chia r) lớn hơn L(Ā) — ước lượng không chệch nhưng có thể âm "
                  "trong mẫu hữu hạn, trong khi loss thật ≥ 0:\n")
         L.append(md(neg.reset_index()[["image", "L_Abar", "var_term", "L_mu", "sigma2", "L_one"]]))
-    d = (q.L_mu - g.L_mu).values
+    # QUY ƯỚC DUY NHẤT cho mọi dòng: hiệu = IG − chọn; > 0 ⇔ cấu hình chọn TỐT HƠN IG (infid thấp hơn). Cùng chiều với cột
+    # "giảm L_D(μ)" của bảng H3b trong INFID_SAMPLING_REPORT.md (= L_IG − L_chọn).
+    d = (g.L_mu - q.L_mu).values
     idx = boot_idx(len(d), B, seed)
     bs = d[idx].mean(1)
     lo, hi = ci_of(bs, al)
-    rows = [{"đại lượng": f"chênh tuyệt đối L̂(μ_IG) − L̂(μ_{chosen}) (KẾT QUẢ CHÍNH của H3b)", "giá trị": fmt_ci(float(d.mean()), lo, hi),
-             "ảnh chọn tốt hơn": f"{int((d > 0).sum())}/{len(d)}"}]
+    rows = [{"đại lượng": f"L̂(μ_IG) − L̂(μ_{chosen}) (KẾT QUẢ CHÍNH của H3b; > 0 ⇔ {chosen} tốt hơn)", "giá trị": fmt_ci(float(d.mean()), lo, hi),
+             "ảnh chọn tốt hơn (hiệu > 0)": f"{int((d > 0).sum())}/{len(d)}"}]
     if len(neg) or (q.L_mu <= 0).any():
         rows.append({"đại lượng": "log-tỷ số trên L̂ đã khử phương sai", "giá trị": "KHÔNG ước lượng đáng tin (có L̂ ≤ 0; không kẹp)",
-                     "ảnh chọn tốt hơn": "—"})
+                     "ảnh chọn tốt hơn (hiệu > 0)": "—"})
     else:
         lr = np.log(g.L_mu.values / q.L_mu.values)
         lo2, hi2 = ci_of(lr[idx].mean(1), al)
-        rows.append({"đại lượng": "log(L̂_IG / L̂_chọn)", "giá trị": fmt_ci(float(lr.mean()), lo2, hi2), "ảnh chọn tốt hơn": f"{int((lr > 0).sum())}/{len(lr)}"})
+        rows.append({"đại lượng": "log(L̂_IG / L̂_chọn) (> 0 ⇔ chọn tốt hơn)", "giá trị": fmt_ci(float(lr.mean()), lo2, hi2),
+                     "ảnh chọn tốt hơn (hiệu > 0)": f"{int((lr > 0).sum())}/{len(lr)}"})
     lr3 = np.log(g.L_Abar.values / q.L_Ebar.values)
     lo3, hi3 = ci_of(lr3[idx].mean(1), al)
-    rows.append({"đại lượng": f"log(L(Ā_IG, r={r:g}) / L(Ē_chọn, {int(q.m.iloc[0]) * 2} đường)) — ESTIMAND KHÁC (gồm phương sai hữu hạn)",
-                 "giá trị": fmt_ci(float(lr3.mean()), lo3, hi3), "ảnh chọn tốt hơn": f"{int((lr3 > 0).sum())}/{len(lr3)}"})
+    rows.append({"đại lượng": f"log(L(Ā_IG, r={r:g}) / L(Ē_chọn, {int(q.m.iloc[0]) * 2} đường)) — ESTIMAND KHÁC (gồm phương sai hữu hạn; "
+                               "> 0 ⇔ chọn tốt hơn)",
+                 "giá trị": fmt_ci(float(lr3.mean()), lo3, hi3), "ảnh chọn tốt hơn (hiệu > 0)": f"{int((lr3 > 0).sum())}/{len(lr3)}"})
     L.append(md(pd.DataFrame(rows)))
+    # kiểm chéo: cùng hiệu với bảng H3b của báo cáo chính (tính lại độc lập từ cùng CSV)
+    chk = float(np.nanmean(g.L_mu.values - q.L_mu.values))
+    L.append(f"Kiểm chéo dấu: TB(L̂_IG − L̂_chọn) = {chk:+.4g} (phải trùng dấu và giá trị với cột 'giảm L_D(μ)' của dòng IG trong bảng H3b "
+             f"của INFID_SAMPLING_REPORT.md). Ảnh chọn kém hơn IG: {', '.join(g.index[d < 0]) or 'không có'}.\n")
     L.append("H3 chính (so với SPI baseline) là phép kiểm riêng, không phụ thuộc log-tỷ số của IG.\n")
     return L
 
@@ -142,13 +150,64 @@ def sec_B(cfg, chosen: str, base: str, B: int, seed: int, al: float, out: str) -
                      "ảnh |d| lớn nhất": f"{M.index[imax]} ({v[imax]:+.3g})"})
     allneg = float((bs < 0).all(1).mean())
     n_ci = int(sum(r["CI < 0"] for r in rows))
+    sim = simultaneous(X, bs, al)
+    for r_, sm in zip(rows, sim):
+        r_.update(sm)
     L.append(f"d_(i,D) = L_D,i(μ_{chosen}) − L_D,i(μ_{base}); {len(M)} ảnh có đủ {len(M.columns)} D. Mỗi lần bootstrap rút lại ẢNH và giữ "
              "nguyên cả hàng D ⇒ CI đồng thời phản ánh tương quan giữa các D; KHÔNG xem các D là các lần tái lập độc lập.\n")
     L.append(md(pd.DataFrame(rows)))
-    L.append(f"- {n_ci}/{len(M.columns)} D có CI 95% của TB d nằm hoàn toàn dưới 0. P_bootstrap(TB d < 0 trên CẢ {len(M.columns)} D cùng lúc) "
-             f"= {allneg:.3f}. Các D cùng hướng nhưng không phải mọi D đều đủ bằng chứng riêng lẻ.\n")
+    nD = len(M.columns)
+    n_sim = int(sum(r["CI đồng thời < 0"] for r in rows))
+    n_holm = int(sum(r["Holm: có ý nghĩa"] for r in rows))
+    L.append(f"- **Từng D riêng lẻ (CI 95% chưa điều chỉnh):** {n_ci}/{nD} D có CI nằm hoàn toàn dưới 0"
+             + (" — MỌI D đều có bằng chứng riêng lẻ." if n_ci == nD else " — không phải mọi D đều có bằng chứng riêng lẻ.") + "")
+    L.append(f"- **Đồng thời (mức gia đình 95%):** CI đồng thời kiểu max-|t| bootstrap: {n_sim}/{nD} D nằm dưới 0; Holm trên p bootstrap hai "
+             f"phía: {n_holm}/{nD} D có ý nghĩa. Đây là bảo đảm cho các khẳng định TỪNG D trong cả gia đình {nD} D.")
+    L.append(f"- **Khẳng định \"cải thiện trên MỌI D\"** là phép thử giao–hợp (intersection–union): bác bỏ H0 \"có ít nhất một D không cải thiện\" "
+             f"ở mức α khi TỪNG D bị bác bỏ ở mức α (một phía) — không cần hiệu chỉnh đa kiểm định. Theo CI riêng lẻ: "
+             f"{'ĐẠT' if n_ci == nD else 'KHÔNG đạt'}. P_bootstrap(TB d < 0 trên cả {nD} D cùng lúc) = {allneg:.3f} (mô tả).")
+    L.append("- E2 là phân tích MÔ TẢ (ngoài mẫu, không có giả thuyết đăng ký trước cho từng D).\n")
     M.to_csv(os.path.join(out, "B_e2_paired_d.csv"))
     return L
+
+
+def boot_p(bs: np.ndarray) -> float:
+    """p bootstrap hai phía cho H0: TB = 0 (đảo dấu phân phối bootstrap): 2·min(P(bs ≤ 0), P(bs ≥ 0)), hiệu chỉnh +1."""
+    bs = bs[np.isfinite(bs)]
+    n = len(bs)
+    if not n:
+        return math.nan
+    return float(min(1.0, 2 * min((1 + (bs <= 0).sum()) / (n + 1), (1 + (bs >= 0).sum()) / (n + 1))))
+
+
+def holm(ps) -> list:
+    """p hiệu chỉnh Holm (step-down, đơn điệu)."""
+    ps = np.asarray(ps, float)
+    m = len(ps)
+    order = np.argsort(ps)
+    adj = np.empty(m)
+    run = 0.0
+    for k, i in enumerate(order):
+        run = max(run, min(1.0, (m - k) * ps[i]))
+        adj[i] = run
+    return adj.tolist()
+
+
+def simultaneous(X: np.ndarray, bs: np.ndarray, al: float) -> list:
+    """CI đồng thời max-|t| (bootstrap): t*_b = max_j |bs_bj − x̄_j| / sd_j; c = q_{1−α}(t*); CI_j = x̄_j ± c·sd_j. Kèm Holm trên p bootstrap."""
+    xbar = X.mean(0)
+    sd = bs.std(0, ddof=1)
+    sd = np.where(sd > 0, sd, np.nan)
+    tmax = np.nanmax(np.abs(bs - xbar) / sd, axis=1)
+    c = float(np.nanquantile(tmax, 1 - al))
+    ps = [boot_p(bs[:, j]) for j in range(X.shape[1])]
+    ph = holm(ps)
+    out = []
+    for j in range(X.shape[1]):
+        lo, hi = xbar[j] - c * sd[j], xbar[j] + c * sd[j]
+        out.append({"CI đồng thời (max-|t|)": fmt_ci(float(xbar[j]), float(lo), float(hi)), "CI đồng thời < 0": bool(hi < 0),
+                    "p bootstrap": ps[j], "p Holm": ph[j], "Holm: có ý nghĩa": bool(ph[j] < al)})
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -175,16 +234,27 @@ def sec_C(cfg, chosen: str, base: str, B: int, seed: int, al: float, out: str) -
             if len(j) < 2:
                 continue
             v = sgn * (j.a - j.b).values                                             # > 0 ⇒ a tốt hơn b theo đúng chiều của metric
-            lo, hi = ci_of(v[boot_idx(len(v), B, seed)].mean(1), al)
-            verdict = ("a tốt hơn (có ý nghĩa)" if lo > 0 else "a kém hơn (có ý nghĩa)" if hi < 0 else "chưa ghi nhận khác biệt")
+            bsv = v[boot_idx(len(v), B, seed)].mean(1)
+            lo, hi = ci_of(bsv, al)
+            verdict = ("a tốt hơn" if lo > 0 else "a kém hơn" if hi < 0 else "chưa ghi nhận khác biệt")
             rows.append({"a": a, "b": b, "metric": met, "chiều tốt": "lớn" if sgn > 0 else "nhỏ", "n ảnh": len(v),
-                         "TB a": float(j.a.mean()), "TB b": float(j.b.mean()), "(a − b) theo chiều tốt [CI]": fmt_ci(float(v.mean()), lo, hi),
-                         "a thắng": f"{int((v > 0).sum())}/{len(v)}", "kết luận": verdict})
+                         "TB a": float(j.a.mean()), "TB b": float(j.b.mean()), "(a − b) theo chiều tốt [CI chưa điều chỉnh]": fmt_ci(float(v.mean()), lo, hi),
+                         "a thắng": f"{int((v > 0).sum())}/{len(v)}", "kết luận (chưa điều chỉnh)": verdict, "p bootstrap": boot_p(bsv),
+                         "_sign": float(np.sign(v.mean()))})
     df = pd.DataFrame(rows)
+    if len(df):
+        adj = []
+        for _, g in df.groupby(["a", "b"], sort=False):                                # gia đình = các metric của MỘT cặp so sánh
+            adj += list(zip(g.index, holm(g["p bootstrap"].values)))
+        df["p Holm (trong cặp)"] = df.index.map(dict(adj))
+        df["kết luận (Holm)"] = [("a tốt hơn" if sg > 0 else "a kém hơn") if ph < al else "chưa ghi nhận khác biệt"
+                                 for sg, ph in zip(df["_sign"], df["p Holm (trong cặp)"])]
+        df = df.drop(columns="_sign")
     df.to_csv(os.path.join(out, "C_ext_paired.csv"), index=False)
-    L.append("Dương = a tốt hơn b theo chiều tốt của metric (road_morf: nhỏ hơn là tốt). CI không chứa 0 ⇒ có ý nghĩa; chứa 0 ⇒ \"chưa ghi nhận "
-             "cải thiện / khác biệt\" — KHÔNG phải \"tương đương\". Ước lượng ở K chính nên α có phương sai đường lớn bị thiệt; tách kỳ vọng "
-             "khỏi phương sai cần tính lại trên Ē nhiều đường (GPU).\n")
+    L.append("Dương = a tốt hơn b theo chiều tốt của metric (road_morf: nhỏ hơn là tốt). Báo cả CI 95% CHƯA điều chỉnh và p hiệu chỉnh Holm "
+             "trong gia đình các metric của MỖI cặp so sánh (p bootstrap hai phía). \"Chưa ghi nhận khác biệt\" — KHÔNG phải \"tương đương\". "
+             "Metric đo trên attribution hữu hạn K chính (rev K = 4 / IG 4 lần rút): chưa thể quy khác biệt cho attribution KỲ VỌNG — phương "
+             "sai lấy mẫu (lớn hơn ở α nhỏ) có thể góp phần; tách hai phần cần tính lại trên Ē nhiều đường (GPU).\n")
     L.append(md(df))
     return L
 
@@ -364,3 +434,47 @@ def run(cfg: dict) -> str:
         json.dump({"chosen": chosen, "base": base, "B": B, "seed": seed, "alpha": al}, fh, indent=1)
     print(f"[infid-posthoc] {rp}")
     return rp
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# đóng băng
+# ─────────────────────────────────────────────────────────────────────────────
+
+def freeze(cfg: dict) -> str:
+    """Ghi infid/FROZEN.json: sha256 của mọi CSV / JSON / báo cáo dùng cho bản kết quả, khoá protocol, lựa chọn, config và mã nguồn.
+    Phân loại: đăng ký trước (H1, H3), mô tả (E2, metric ngoài, J(K)), hậu kiểm (độ nhạy C_D). Chạy SAU infid-posthoc."""
+    import datetime as _dt
+    import glob
+    import hashlib
+    root = os.path.join(C.out_dir(cfg, "pilot"), "infid")
+
+    def sha(p):
+        h = hashlib.sha256()
+        with open(p, "rb") as fh:
+            h.update(fh.read())
+        return h.hexdigest()
+    files = sorted(set(glob.glob(os.path.join(root, "*.md")) + glob.glob(os.path.join(root, "*.json")) +
+                       glob.glob(os.path.join(root, "sampling", "*", "*.csv")) + glob.glob(os.path.join(root, "sampling", "*", "meta.json")) +
+                       glob.glob(os.path.join(root, "e0", "*.csv")) + glob.glob(os.path.join(root, "quad", "*.csv")) +
+                       glob.glob(os.path.join(root, "toy", "*.csv")) + glob.glob(os.path.join(root, "posthoc", "*"))))
+    files = [f for f in files if os.path.isfile(f) and not f.endswith("FROZEN.json")]
+    src = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    hs = hashlib.sha256()
+    for f in sorted(glob.glob(os.path.join(src, "probe", "*.py"))):
+        hs.update(open(f, "rb").read())
+    pre = os.path.join(root, "infid_prereg.json")
+    rec = {"time": _dt.datetime.now().isoformat(timespec="seconds"), "config": cfg["_path"], "config_sha256": sha(cfg["_path"]),
+           "source_sha256": hs.hexdigest(), "prereg_digest": json.load(open(pre))["digest"] if os.path.exists(pre) else None,
+           "evidence_levels": {"đăng ký trước (xác nhận)": ["H1 (E1a)", "H3 (E1b test, so với SPI baseline)"],
+                               "đối chứng riêng": ["H3b (so với IG) — chênh tuyệt đối"],
+                               "mô tả": ["E2 (8 D)", "metric ngoài", "J(K) và K*", "dev / pilot"],
+                               "hậu kiểm (post hoc)": ["độ nhạy C_D (INFID_POSTHOC_REPORT.md mục E)"],
+                               "hoãn": ["H2 (nbr)"]},
+           "files": {os.path.relpath(f, root): sha(f) for f in files}}
+    p = os.path.join(root, "FROZEN.json")
+    if os.path.exists(p):
+        rec["previous"] = json.load(open(p))
+    with open(p, "w") as fh:
+        json.dump(rec, fh, indent=1, ensure_ascii=False)
+    print(f"[infid-freeze] {p}: {len(files)} file")
+    return p

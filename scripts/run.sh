@@ -9,6 +9,7 @@
 #   infid-lock               khoá protocol (sau khi điền K_main, δ₁–δ₃, rule/M)
 #   sampling-infid-e1a | sampling-infid-e1b-dev | sampling-infid-e1b-test | sampling-infid-e2   (cần khoá)
 #   infid-posthoc            kiểm toán sau kiểm định, không GPU → runs_probe/pilot/infid/INFID_POSTHOC_REPORT.md
+#   infid-freeze             đóng băng kết quả (sha256 mọi CSV / báo cáo / khoá) → runs_probe/pilot/infid/FROZEN.json
 #   *-report                 dựng lại báo cáo từ CSV: toy-report, pathscore-report, pathscore-infid-report, quad-check-report,
 #                            sampling-infid-report
 #   <lệnh>-debug             bản debug của mọi lệnh trên (ít ảnh, ít bước; ghi vào runs_probe_debug/)
