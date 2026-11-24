@@ -316,6 +316,26 @@ def run(ctx, stage: str) -> None:
     write_report(cfg)
 
 
+def posthoc_targets(ctx, cfg: dict, n_images=None) -> tuple:
+    """Ảnh + cấu hình cho các hậu kiểm (signdiag*): ảnh test và cấu hình test ĐÃ KHOÁ. Riêng chế độ debug (không có test debug):
+    lấy ảnh từ split test theo config debug và cấu hình = incumbent + đối chứng + ln / cmix đầu tiên của lưới."""
+    mt_p = os.path.join(root(cfg), "test", "meta.json")
+    if os.path.exists(mt_p) and os.path.exists(sel_path(cfg)):
+        imgs = json.load(open(mt_p))["images"]
+        confs = test_configs(cfg, load_sel(cfg))
+    elif cfg.get("_debug"):
+        b = pc(cfg)
+        imgs = [f"seg{i:05d}" for i in stage_images(ctx, {**b["test"], "n_images": int(n_images or 2)})]
+        g = grid_configs(cfg)
+        confs = [norm_conf(b["incumbent"])] + [norm_conf(x) for x in b["controls"]] + \
+            [next(c for c in g if c["family"] == f) for f in ("ln", "cmix") if any(c["family"] == f for c in g)]
+    else:
+        raise SystemExit("hậu kiểm trên ảnh test ĐÃ KHOÁ: cần pathfam-lock và pathfam-test trước")
+    if n_images:
+        imgs = imgs[: int(n_images)]
+    return imgs, confs
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # lựa chọn + lực trên dev
 # ─────────────────────────────────────────────────────────────────────────────

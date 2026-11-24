@@ -97,14 +97,9 @@ def run(ctx) -> None:
     v = PFM.view(cfg)
     c = sd2(cfg)
     P = PFM.pr(cfg)
-    mt_p = os.path.join(PFM.root(cfg), "test", "meta.json")
-    if not cfg["_debug"] and (not os.path.exists(PFM.lock_path(cfg)) or not os.path.exists(mt_p)):
+    if not cfg["_debug"] and not os.path.exists(PFM.lock_path(cfg)):
         raise SystemExit("pathfam-signdiag2 là hậu kiểm trên ảnh test ĐÃ KHOÁ: cần pathfam-lock và pathfam-test trước")
-    imgs = json.load(open(mt_p))["images"]
-    if c["n_images"]:
-        imgs = imgs[: int(c["n_images"])]
-    sel = PFM.load_sel(cfg)
-    confs = PFM.test_configs(cfg, sel)
+    imgs, confs = PFM.posthoc_targets(ctx, cfg, c["n_images"])
     extra = matched_configs(cfg, confs) if c["matched"] else []
     allc = confs + extra
     Dp = PFM.pc(cfg)["sets"][0]
