@@ -226,6 +226,54 @@ budget:
     top_frac: 0.05
   gpu_minutes: {dev1: 240, dev2: 180, test: 240}   # trần GPU đặt trước (ước tính theo số gradient); vượt ⇒ dừng trước khi chạy
 
+# ─────────────────────────────────────────────────────────────────────────────
+# BUDGET2 — vòng 2 (docs/PROTOCOL_BUDGET2.md): vượt INCUMBENT (SPI α = 1, N = 32, rev — đã xác nhận ở BUDGET 1) ở cùng ngân sách.
+# Nhánh A chính (B 256 chính, 1024 phụ); nhánh B (hier, B 2048 / 4096) chỉ dev + cổng. Ảnh mới: dev fresh 900–931, test fresh 1000–.
+# Khoá riêng budget2/budget2_prereg.json; kết quả runs_probe/pilot/infid/budget2/ + infid/INFID_BUDGET2_REPORT.md
+budget2:
+  protocol:
+    rule: rand
+    M: 1
+    budgets: [256, 1024, 2048, 4096]   # mọi B tính trên dev (J suy từ cùng các cặp)
+    budgets_secondary: []
+    Ks: [2, 4, 8, 16, 32]
+    check_K: [4, 16, 32]
+    branchA_budgets: [256, 1024]
+    primary_budget: 256
+    branchB_budgets: [2048, 4096]
+    gate_min_gain: 0.05                # cổng dev: TB J giảm ≥ 5 % so với tham chiếu …
+    gate_min_prob: 0.80                # … và P_boot(tốt hơn) ≥ 0,8
+    delta_rel: 0.05                    # ngưỡng thực tiễn test: J_new ≤ (1 − δ)·J_ref; H0: g ≤ δ
+    power: 0.80
+    n_min: 48
+    n_max: 128
+    alpha: 0.05
+    bootstrap: 10000
+    seed: 47
+    floor_grids: [14]
+    floor_lams: [0.0, 1.0e-3, 1.0e-2, 1.0e-1]
+    floor_folds: 4
+  sets: [del_sq]
+  coupling: rev                        # coupling chính; J indep vẫn báo kèm
+  incumbent: {family: spi, alpha: 1, N: 32}
+  prior: {family: spi, alpha: 0.1, N: 64}
+  dev: {split: fresh, offset: 900, n_images: 32, m: 32}
+  branchA: {alphas: [0.3, 1, 3], N: [8, 16, 32]}
+  branchB: {enabled: true, alphas: [0.1, 0.3], G: [14], eta: [0.25, 0.5, 0.75], N: 64}
+  test:
+    split: fresh
+    offset: 1000                       # n ảnh = tính lúc budget2-lock (kẹp [n_min, n_max])
+    m: 32
+    budgets: [256, 1024]               # chỉ nhánh A; thêm 2048 / 4096 CHỈ khi nhánh B qua cổng và đã được duyệt mở test
+    extra_configs: []                  # ví dụ [{family: spi, alpha: 10, N: 64}] để mô tả
+    sets: [del_sq, ins_sq, sym_sq, frac25, frac50, frac75, del_sq_blur, del_sp]
+    external: true
+    road: {fracs: [0.1, 0.3, 0.5, 0.7, 0.9], noise: 0.01, iters: 1000, tol: 1.0e-5}
+    insdel_steps: 50
+    pointing_tol: 15
+    top_frac: 0.05
+  gpu_minutes: {dev: 300, test: 300}
+
 debug:
   paths:
     spi10:  {steps: 8}
@@ -259,6 +307,17 @@ debug:
     test: {n_images: 2, m: 4, baseline: {family: spi, alpha: 10, N: 8}, prior: {family: spi, alpha: 0.1, N: 8},
            sets: [del_sq, ins_sq, del_sp], ig_N: 8, ig_repeats: 8, insdel_steps: 10, road: {fracs: [0.2, 0.8], iters: 200}}
     gpu_minutes: {dev1: null, dev2: null, test: null}
+  budget2:
+    protocol: {budgets: [32, 64, 128], Ks: [2, 4, 8], check_K: [4], branchA_budgets: [32, 64], primary_budget: 32,
+               branchB_budgets: [128], gate_min_gain: -1.0e9, gate_min_prob: 0.0, n_min: 2, n_max: 3, bootstrap: 200,
+               floor_lams: [0.0, 1.0e-2], floor_folds: 2}
+    incumbent: {family: spi, alpha: 1, N: 4}
+    prior: {family: spi, alpha: 0.1, N: 8}
+    dev: {n_images: 2, m: 4}
+    branchA: {alphas: [1, 3], N: [2, 4]}
+    branchB: {alphas: [0.1], G: [7], eta: [0.5], N: 8}
+    test: {m: 4, budgets: [32, 64], sets: [del_sq, ins_sq, del_sp], insdel_steps: 10, road: {fracs: [0.2, 0.8], iters: 200}}
+    gpu_minutes: {dev: null, test: null}
 
 # ─────────────────────────────────────────────────────────────────────────────
 local:

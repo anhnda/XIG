@@ -27,6 +27,12 @@ Nghiên cứu BUDGET (mục budget:, docs/PROTOCOL_BUDGET.md; kết quả infid/
   budget-lock              khoá tiêu chí + lựa chọn cuối → budget/budget_prereg.json
   budget-test              G3 + G4: ảnh test mới, θ*(B) vs SPI α = 10 / α = 0,1 / IG cùng ngân sách, 8 D, metric ngoài — cần khoá
   budget-report            dựng lại INFID_BUDGET_REPORT.md
+  budget-audit             kiểm toán BUDGET 1 (không GPU): P_select đầy đủ, hiệu chuẩn p của R, kiểm J thực nghiệm → INFID_BUDGET_AUDIT.md
+Vòng BUDGET2 (mục budget2:, docs/PROTOCOL_BUDGET2.md; kết quả infid/budget2/ + infid/INFID_BUDGET2_REPORT.md):
+  budget2-dev              nhánh A (SPI α × N nhỏ, B 256 / 1024) + nhánh B dev-only (hier, B 2048 / 4096); cổng so với incumbent
+  budget2-lock             khoá cổng, ngân sách được kiểm, cỡ mẫu test (từ SD theo cặp trên dev)
+  budget2-test             kiểm định trên ảnh mới — cần khoá
+  budget2-report           dựng lại INFID_BUDGET2_REPORT.md
 Chạy lại sẽ bỏ qua phần đã có trong cache (cùng hash config).
 """
 
@@ -39,7 +45,8 @@ from . import config as C
 CMDS = ["toy", "toy-large", "toy-report", "pathscore", "pathscore-report", "pathscore-infid-decomp", "pathscore-infid-report",
         "quad-check", "quad-check-report", "sampling-infid-pilot", "infid-lock", "sampling-infid-e1a", "sampling-infid-e1b-dev",
         "sampling-infid-e1b-test", "sampling-infid-e2", "sampling-infid-report", "infid-posthoc", "infid-freeze",
-        "budget-dev1", "budget-dev2", "budget-lock", "budget-test", "budget-report"]
+        "budget-dev1", "budget-dev2", "budget-lock", "budget-test", "budget-report", "budget-audit",
+        "budget2-dev", "budget2-lock", "budget2-test", "budget2-report"]
 
 
 def main(argv=None) -> None:
@@ -83,6 +90,17 @@ def main(argv=None) -> None:
     elif cmd == "infid-freeze":
         from . import infid_posthoc as PH
         PH.freeze(cfg)
+    elif cmd == "budget-audit":
+        from . import budget_audit as BA
+        BA.run(cfg)
+    elif cmd.startswith("budget2-"):
+        from . import budget2 as B2
+        if cmd == "budget2-lock":
+            B2.lock(cfg)
+        elif cmd == "budget2-report":
+            B2.write_report(cfg)
+        else:
+            B2.run(ctx(), cmd[len("budget2-"):])
     elif cmd.startswith("budget-"):
         from . import budget_opt as BO
         if cmd == "budget-lock":

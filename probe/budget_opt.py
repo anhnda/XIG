@@ -76,7 +76,7 @@ def bpr(cfg: dict) -> dict:
 
 
 def broot(cfg: dict) -> str:
-    d = os.path.join(C.out_dir(cfg, "pilot"), "infid", "budget")
+    d = os.path.join(C.out_dir(cfg, "pilot"), "infid", bcfg(cfg).get("dir", "budget"))
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -297,10 +297,10 @@ def digest(cfg: dict, stage: str, sc: dict, extra) -> str:
                   "data": cfg["data"], "extra": extra})
 
 
-def maps_spec(conf: dict, cfg: dict) -> list:
+def maps_spec(conf: dict, cfg: dict, budgets=None) -> list:
     pr = bpr(cfg)
     out = []
-    for B in pr["budgets"]:
+    for B in (budgets if budgets is not None else pr["budgets"]):
         K = k_of(B, conf["N"], pr["M"])
         for cp in COUPLINGS:
             if coupling_ok(cp, K):
@@ -333,7 +333,7 @@ def process(ctx, cfg: dict, stage: str, sc: dict, idx: int, out: str) -> dict:
                 rows[k] += v
             continue
         E, ds = env()
-        keep = maps_spec(conf, cfg) if (stage == "test" and sc.get("external")) else []
+        keep = maps_spec(conf, cfg, sc.get("map_budgets")) if sc.get("external") else []
         res = pair_maps(E, conf, int(sc["m"]), pr, ds, f"BUD-{stage}", keep)
         base = {"stage": stage, "image": image, "config": nm_c, **norm_conf(conf), "rule": pr["rule"], "M": int(pr["M"])}
         rr = {k: [] for k in rows}
@@ -622,7 +622,10 @@ def dev_section(cfg: dict, stage: str) -> list:
         rows = []
         for B, s in sel["final"].items():
             top3 = "; ".join(f"{x['cand']} ({x['J_mean']:.3g}, P {x['p_select']:.2f})" for x in s["table"][:3])
-            rows.append({"B": B, "θ*(B)": s["chosen"], "K": s["K"], "P_select(θ*)": s["table"][0]["p_select"], "3 ứng viên đầu": top3})
+            other = sorted((x for x in s["table"][3:] if x["p_select"] >= 0.02), key=lambda x: -x["p_select"])
+            oth = "; ".join(f"{x['cand']} ({x['J_mean']:.3g}, P {x['p_select']:.2f})" for x in other) or "—"
+            rows.append({"B": B, "θ*(B)": s["chosen"], "K": s["K"], "P_select(θ*)": s["table"][0]["p_select"], "3 ứng viên đầu": top3,
+                         "ứng viên khác có P_select ≥ 0,02": oth})
         L.append(md(pd.DataFrame(rows)))
         if stage == "dev1":
             L.append(f"Top α cho G2 (hạng TB qua các B chính): {sel.get('top_alphas')}.\n")
