@@ -117,3 +117,11 @@ symbolic các định lý Phase 2).
 **H-SU**: metric xếp hạng CÓ DẤU (InsDel có dấu, năng lượng A⁺ trong mask, IoU theo A⁺) đồng thuận với J nhiều hơn metric KHÔNG DẤU
 tương ứng (so cặp τ theo ảnh). Đo kèm completeness thực nghiệm, tỷ lệ triệt tiêu ‖A‖₁/|ΣA|, khối lượng âm, triệt tiêu giữa kênh,
 infid_β (thang đo tối ưu).
+
+## 10. Vòng chẩn đoán cuối (hậu kiểm, mô tả; không chọn lại, không đổi endpoint, không tạo tuyên bố xác nhận)
+
+Vòng 1 (`pathfam-signdiag`) chỉ lưu thống kê tổng hợp, không lưu attribution ⇒ không có cache để tính β, sai số completeness tuyệt đối hay
+so sánh cùng h-N-K mà không chạy lại. `pathfam-signdiag2` dựng lại bản đồ MỘT lần (luồng `pfsd2`) trên ảnh / cấu hình test đã khoá, thêm
+cấu hình đối ứng spi / ln / cmix cùng h, N = 32 (chỉ để so sánh có kiểm soát), và lưu: yᵀy, yᵀd, dᵀd trên bộ chọn và bộ đánh giá (β trong /
+ngoài mẫu), F(x), F(x′), ΣA cho bản đồ lồng nhau K ∈ {2, 4, 8, 16, 32} và Ē, InsDel có dấu / không dấu với nền blur VÀ nền đen. Định nghĩa
+metric và phát hiện lệch nền: `docs/PATHFAM_METRIC_AUDIT.md`. Sau vòng này đóng phần thực nghiệm (`pathfam-freeze`).

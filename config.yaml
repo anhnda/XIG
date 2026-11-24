@@ -341,6 +341,14 @@ pathfam:
     insdel_steps: 50
     n_images: null                     # null = mọi ảnh test đã khoá
     gpu_minutes: 180
+  signdiag2:                           # pathfam-signdiag2 (GPU, hậu kiểm vòng 2; mô tả, không chọn lại, không đổi endpoint)
+    m: 16
+    K_levels: [2, 4, 8, 16, 32]        # bản đồ lồng nhau (cùng các cặp) cho xu hướng completeness / β theo K — không thêm gradient
+    metric_budgets: [256, 1024]        # InsDel (4 biến thể) chỉ ở K của các ngân sách này và Ē
+    matched: true                      # thêm spi / ln / cmix cùng h, N = 32 cho so sánh có kiểm soát
+    insdel_steps: 50
+    n_images: null
+    gpu_minutes: 240
 
 debug:
   paths:
@@ -385,6 +393,7 @@ debug:
     test: {m: 4, sets: [del_sq, ins_sq, del_sp], insdel_steps: 10, road: {fracs: [0.2, 0.8], iters: 200}}
     gpu_minutes: {dev: null, test: null}
     signdiag: {m: 4, budgets: [32], insdel_steps: 10, n_images: 2, gpu_minutes: null}
+    signdiag2: {m: 4, K_levels: [2, 4, 8], metric_budgets: [32], insdel_steps: 10, n_images: 2, gpu_minutes: null}
   budget2:
     protocol: {budgets: [32, 64, 128], Ks: [2, 4, 8], check_K: [4], branchA_budgets: [32, 64], primary_budget: 32,
                branchB_budgets: [128], gate_min_gain: -1.0e9, gate_min_prob: 0.0, n_min: 2, n_max: 3, bootstrap: 200,

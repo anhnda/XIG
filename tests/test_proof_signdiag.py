@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 
@@ -71,3 +72,72 @@ def test_signdiag_report_offline(tmp_path):
     pd.DataFrame(rows).to_csv(os.path.join(SD.out_dir(cfg), "signdiag.csv"), index=False)
     txt = open(SD.report(cfg)).read()
     assert "H-SU" in txt and "τ(insdel_signed) − τ(insdel_abs)" in txt and "smooth" in txt
+
+
+def test_insdel_baseline_mismatch():
+    """InsDel thật (`sampling.insdel_full`) với mô hình tuyến tính: nền đen + xếp hạng có dấu đúng chiều; nền blur mất ý nghĩa."""
+    import torch.nn as nn
+    from probe import sampling as SM
+
+    class Lin(nn.Module):
+        def __init__(self, w):
+            super().__init__()
+            self.w = w
+
+        def forward(self, x):
+            z = (x * self.w).flatten(1).sum(1)
+            return torch.stack([z, torch.zeros_like(z)], 1)
+    H = W = 8
+    x = torch.ones(1, 1, H, W)
+    x[0, 0, ::3, ::3] = 0.5
+    w = torch.ones(1, H, W) * 0.05
+    w[0, ::3, ::3] = 0.4
+    w[0, 1::3, 1::3] = -0.3
+    b = torch.nn.functional.conv2d(torch.nn.functional.pad(x, (1, 1, 1, 1), mode="replicate"), torch.ones(1, 1, 3, 3) / 9)
+    A = w * x[0]
+    m = Lin(w)
+    r = {(nm, sg): SM.insdel_full(m, 0, x, base, A, 16, 64, signed=sg)["diff"] for nm, base in (("black", torch.zeros_like(x)), ("blur", b))
+         for sg in (False, True)}
+    assert r[("black", True)] > 0.5 and r[("black", False)] < 0
+    assert r[("blur", True)] < 0.1 and r[("blur", False)] < 0.1
+
+
+def test_scale_terms_and_matched():
+    from probe import signdiag2 as S2
+    from probe.sampling_infid import cname, norm_conf
+    st = S2.scale_terms(4.0, 2.0, 1.0)                    # y = 2d
+    assert st["beta_opt"] == pytest.approx(0.5) and st["L_1"] == pytest.approx(1.0) and st["L_opt"] == pytest.approx(0.0)
+    assert S2.L_at(0.5, 4.0, 2.0, 1.0) == pytest.approx(0.0) and S2.L_at(0.0, 4.0, 2.0, 1.0) == pytest.approx(1.0)
+    cfg = C.load(os.path.join(ROOT, "config.yaml"))
+    confs = [norm_conf(c) for c in ({"family": "ln", "alpha": 3, "N": 32}, {"family": "smooth", "delta": 1.0, "N": 32},
+                                     {"family": "spi", "alpha": 1, "N": 32}, {"family": "spi", "alpha": 10, "N": 64})]
+    names = {cname(c) for c in S2.matched_configs(cfg, confs)}
+    assert {"spi_a3_N32", "cmix_a3_N32", "spi_a4_N32", "ln_a4_N32", "cmix_a4_N32", "ln_a1_N32", "cmix_a1_N32"} <= names
+    assert "ln_a3_N32" not in names and not any(n.endswith("_N64") for n in names)
+
+
+def test_signdiag2_report_offline(tmp_path):
+    from probe import signdiag2 as S2
+    cfg = C.load(os.path.join(ROOT, "config.yaml"))
+    cfg["local"] = {**cfg.get("local", {}), "out": str(tmp_path / "runs")}
+    cfg["pathfam"]["protocol"]["bootstrap"] = 200
+    rng = np.random.default_rng(0)
+    rows = []
+    for i in range(16):
+        dF = float(rng.normal(3, 1))
+        for c, fam, h in (("spi_a1_N32", "spi", 0.5), ("ln_a1_N32", "ln", 0.5), ("cmix_a1_N32", "cmix", 0.5)):
+            for K in (2, 4, 8, 16, 32):
+                lab = "mean_all" if K == 32 else f"rev_K{K}"
+                yy, yd, dd = 1.2 + 1 / K + rng.normal(0, 0.05), 0.9, 1.0
+                r = {"image": f"seg{i:05d}", "config": c, "family": fam, "N": 32, "h": h, "estimator": lab, "K": K, "B": 32 * K, "matched_extra": fam != "spi",
+                     "F0": 0.0, "F1": dF, "dF": dF, "sumA": dF + rng.normal(0, 1 / math.sqrt(K)), "l1": 5.0,
+                     "yy_sel": yy, "yd_sel": yd, "dd_sel": dd, "yy_eval": yy * 1.01, "yd_eval": yd, "dd_eval": dd,
+                     "compl_err": 0.0, "cancel": 2.0, "neg_frac": 0.3, "chan_cancel": 0.6 + rng.normal(0, 0.02), "energy_abs": 0.5, "energy_pos": 0.5,
+                     "iou_abs": 0.4 + rng.normal(0, 0.02), "iou_pos": 0.4, "spearman_signed_abs": 0.3}
+                if K in (8, 32):
+                    r.update({k: float(rng.normal(0.1, 0.02)) for k in ("insdel_abs_blur", "insdel_signed_blur", "insdel_abs_black", "insdel_signed_black")})
+                rows.append(r)
+    pd.DataFrame(rows).to_csv(os.path.join(S2.out_dir(cfg), "signdiag2.csv"), index=False)
+    txt = open(S2.report(cfg)).read()
+    for key in ("## 1. Thang đo", "## 2. So sánh có kiểm soát", "## 3. InsDel", "## 4. Completeness", "τ(chan_cancel, infid)"):
+        assert key in txt
