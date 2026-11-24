@@ -132,3 +132,32 @@ def test_ni_tests_and_power():
     assert PFM.decide(r2, 0.10, 0.05) == "KÉM HƠN thực tiễn"
     pl = PFM.plan_ni(ji, same, 0.10, 0.0125, 0.8)
     assert pl["n_req_g0"] >= 1 and pl["n_req_gdev"] >= 1
+
+
+# ── Phase 2: định lý ở mức phân phối đường ──────────────────────────────────
+
+def test_theorem2_levy_area_and_rev_exact():
+    from probe import path_theory as PT
+    rows = PT.t2_t5(P=20000)
+    for r in rows:
+        assert r["max |A − IG − Δ(H∘𝔄)Δ| (từng đường)"] < 1e-12
+        assert r["max |A(Z) + A(RZ) − 2 IG| (từng đường)"] < 1e-12
+        if r["bất biến khi đảo"]:
+            assert r["max |z| của E 𝔄 (≈ 0 nếu bất biến)"] < 4.5
+        else:
+            assert r["‖E A − IG‖"] > 0.1
+
+
+def test_theorem4_area_variance():
+    from probe import path_theory as PT
+    rows = {(r["họ"], r["N"]): r for r in PT.t4a(P=200000)}
+    assert abs(rows[("smooth", 32)]["lệch tương đối"]) < 0.02
+    for fam in ("dp", "cmix"):
+        assert abs(rows[(fam, 128)]["lệch tương đối"]) < abs(rows[(fam, 32)]["lệch tương đối"]) + 0.01   # hội tụ theo N
+        assert abs(rows[(fam, 128)]["lệch tương đối"]) < 0.03
+
+
+def test_theorem4b_same_mean_different_variance():
+    from probe import path_theory as PT
+    r = PT.t4b(P=100000)[0]
+    assert r["max |z| E A (≈ 0: cùng μ)"] < 4.5 and r["max |z| Var A (lớn: khác phương sai)"] > 10

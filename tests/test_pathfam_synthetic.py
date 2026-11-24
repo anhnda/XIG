@@ -74,3 +74,68 @@ def test_runner_offline_pipeline(tmp_path):
     assert "NI" in txt and "J_indep" in txt and "Cùng exploration h" in txt and "Kiểm toán chi phí" in txt
     assert "KHÔNG KÉM HƠN" in txt or "CHƯA KẾT LUẬN" in txt or "KÉM HƠN" in txt
     json.dumps(pl, default=str)
+
+
+def _fake_ext_meta(cfg, stage, configs, n_img, rng):
+    out = os.path.join(PFM.root(cfg), stage)
+    rows = []
+    for i in range(n_img):
+        im = f"seg{90000 + i:05d}"
+        for c in configs:
+            nm = PFM.cname(c)
+            ests = ["mean_all"] + [f"{cp}_B{B}_K{B // c['N']}" for B in (256, 1024) for cp in ("rev", "indep") if (B // c["N"]) % 2 == 0]
+            for e in ests:
+                rows.append({"stage": stage, "image": im, "config": nm, **c, "estimator": e,
+                             **{m: float(rng.uniform(0, 1)) for m in ("insdel_blur", "road", "road_morf", "road_lerf", "iou", "pointing", "auroc_mask", "ap_mask")}})
+    pd.DataFrame(rows).to_csv(os.path.join(out, "ext.csv"), index=False)
+    with open(os.path.join(out, "meta.json"), "w") as fh:
+        json.dump({"time": "2999-01-01T00:00:00", "images": [f"seg{90000 + i:05d}" if stage == "test" else f"seg{80000 + i:05d}"
+                                                               for i in range(n_img)], "sc": {"configs": configs}}, fh, default=str)
+
+
+def test_verify_diag_freeze_offline(tmp_path):
+    import pytest
+    from probe import pathfam_verify as PV
+    cfg = C.load(os.path.join(ROOT, "config.yaml"))
+    cfg["local"] = {**cfg.get("local", {}), "out": str(tmp_path / "runs")}
+    cfg["pathfam"]["protocol"]["bootstrap"] = 300
+    rng = np.random.default_rng(1)
+    _fake_stage(cfg, "dev", PFM.dev_configs(cfg), 24, ["del_sq"], rng)
+    _fake_ext_meta(cfg, "dev", [], 24, rng)
+    PFM.select(cfg)
+    PFM.lock(cfg)
+    n = json.load(open(PFM.lock_path(cfg)))["payload"]["n_test"]
+    tc = PFM.test_configs(cfg, PFM.load_sel(cfg))
+    _fake_stage(cfg, "test", tc, n, ["del_sq"], rng)
+    _fake_ext_meta(cfg, "test", tc, n, rng)
+    PFM.write_report(cfg)
+    txt = open(PV.verify(cfg)).read()
+    assert "| digest khoá = digest payload tính lại | ✓" in txt
+    assert "| số ảnh test = n trong khoá | ✓" in txt
+    t = pd.read_csv(os.path.join(PFM.root(cfg), "test", "pairs.csv"))
+    assert len(t)
+    # sai khác với runner ≈ 0
+    import re
+    diffs = [float(x) for x in re.findall(r"\| (\d\.\d+e-\d+|0) \|", txt)]
+    assert all(d < 1e-9 for d in diffs)
+    PV.diag(cfg)
+    assert os.path.exists(os.path.join(PFM.root(cfg), "PATHFAM_J_VS_EXTERNAL.md"))
+    PV.freeze(cfg)
+    with pytest.raises(SystemExit):
+        PFM.lock(cfg)
+
+
+def test_independent_stats_match_runner():
+    from probe import pathfam_verify as PV
+    rng = np.random.default_rng(3)
+    ji = rng.lognormal(2.5, 0.4, 64)
+    jf = ji * (1 + rng.normal(0.02, 0.05, 64))
+    a = PV.three_tests(ji, jf, 0.10, 2000, 61)
+    r = PFM.tests_for(ji, jf, 0.10, 2000, 61, 0.05)
+    assert abs(a["g"] - r["g"]) < 1e-12
+    for k in ("ni", "sup", "tost"):
+        assert abs(a[f"p_{k}_bt"] - r[f"p_{k}"]) < 1e-12
+    from probe.infid_posthoc import holm
+    ps = [0.01, 0.04, 0.03, 0.2]
+    assert np.allclose(PV.my_holm(ps), holm(ps))
+    assert abs(PV.j_from_raw(np.array([1.0]), np.array([2.0]), np.array([3.0]), 4, "rev")[0] - 2.0) < 1e-12

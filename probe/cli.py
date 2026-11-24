@@ -42,6 +42,10 @@ PATH_FAMILIES (docs/PATH_FAMILIES_AUDIT.md, docs/PATH_FAMILIES_PROTOCOL.md):
   pathfam-dev              Phase 1 dev: 20 cấu hình × 32 ảnh mới; chọn θ*_F theo J_rev; lực NI → infid/pathfam/selection_dev.json
   pathfam-lock             khoá lựa chọn, kiểm định, n test (từ lực dev) → infid/pathfam/pathfam_prereg.json
   pathfam-test             Phase 1 test (cần khoá) → infid/INFID_PATHFAM_REPORT.md;  pathfam-report: dựng lại báo cáo
+  pathfam-verify           CPU: kiểm toán độc lập từ pairs.csv (J, g, NI / sup / TOST, Holm, khoá) → infid/pathfam/PATHFAM_VERIFY.md
+  pathfam-diag             CPU: J ↔ metric ngoài (Kendall τ theo ảnh, mức B và mức μ, smooth) → infid/pathfam/PATHFAM_J_VS_EXTERNAL.md
+  pathfam-theory           CPU: kiểm số định lý Phase 2 (diện tích Lévy, rev chính xác bậc 2, phương sai) → infid/pathfam/PATH_FAMILIES_THEORY_CHECKS.md
+  pathfam-freeze           đóng băng PATHFAM (sha256 artifact, seed, σ) → infid/pathfam/FROZEN.json; chặn dev / lock / test
 Chạy lại sẽ bỏ qua phần đã có trong cache (cùng hash config).
 """
 
@@ -56,7 +60,8 @@ CMDS = ["toy", "toy-large", "toy-report", "pathscore", "pathscore-report", "path
         "sampling-infid-e1b-test", "sampling-infid-e2", "sampling-infid-report", "infid-posthoc", "infid-freeze",
         "budget-dev1", "budget-dev2", "budget-lock", "budget-test", "budget-report", "budget-audit",
         "budget2-dev", "budget2-lock", "budget2-test", "budget2-report", "budget2-audit", "budget2-freeze",
-        "pathfam-audit", "pathfam-plan", "pathfam-dev", "pathfam-lock", "pathfam-test", "pathfam-report"]
+        "pathfam-audit", "pathfam-plan", "pathfam-dev", "pathfam-lock", "pathfam-test", "pathfam-report",
+        "pathfam-verify", "pathfam-diag", "pathfam-theory", "pathfam-freeze"]
 
 
 def main(argv=None) -> None:
@@ -106,6 +111,12 @@ def main(argv=None) -> None:
     elif cmd == "pathfam-audit":
         from . import path_families as PF
         PF.run(cfg)
+    elif cmd in ("pathfam-verify", "pathfam-diag", "pathfam-freeze"):
+        from . import pathfam_verify as PV
+        {"pathfam-verify": PV.verify, "pathfam-diag": PV.diag, "pathfam-freeze": PV.freeze}[cmd](cfg)
+    elif cmd == "pathfam-theory":
+        from . import path_theory as PT
+        PT.run(cfg)
     elif cmd.startswith("pathfam-"):
         from . import pathfam as PFM
         if cmd == "pathfam-plan":

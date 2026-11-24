@@ -97,3 +97,13 @@ bash scripts/run.sh pathfam-dev         # dev → selection_dev.json + bảng l�
 bash scripts/run.sh pathfam-lock        # khoá (n test từ lực)
 bash scripts/run.sh pathfam-test        # test → runs_probe/pilot/infid/INFID_PATHFAM_REPORT.md
 ```
+
+## 9. Sau test: kiểm toán, chẩn đoán, lý thuyết, đóng băng (CPU, không GPU, không chọn lại)
+
+```
+bash scripts/run.sh pathfam-verify   # tính lại J, g, NI / sup / TOST, Holm từ pairs.csv bằng mã riêng; kiểm khoá → pathfam/PATHFAM_VERIFY.md
+bash scripts/run.sh pathfam-diag     # J ↔ metric ngoài (mức B và mức μ), smooth → pathfam/PATHFAM_J_VS_EXTERNAL.md
+bash scripts/run.sh pathfam-theory   # kiểm số Phase 2 → pathfam/PATH_FAMILIES_THEORY_CHECKS.md (lý thuyết: docs/PATH_FAMILIES_THEORY.md)
+bash scripts/run.sh pathfam-freeze   # CHẠY CUỐI: sha256 mọi artifact + seed + σ → pathfam/FROZEN.json; chặn pathfam-dev / lock / test
+```
+Kiểm thử: `pytest tests/` 81 passed (gồm kiểm tích hợp verify / diag / freeze trên dữ liệu tổng hợp và kiểm số các định lý Phase 2).

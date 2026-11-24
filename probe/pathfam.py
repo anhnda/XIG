@@ -262,6 +262,8 @@ def lock_payload(cfg: dict) -> dict:
 
 
 def lock(cfg: dict) -> None:
+    from .pathfam_verify import check_frozen
+    check_frozen(cfg)
     pl = lock_payload(cfg)
     ST.write_prereg(lock_path(cfg), IC._h(pl), {"payload": pl})
     print(f"[pathfam-lock] n test = {pl['n_test']}; thiếu lực: {pl['underpowered'] or 'không'}; cấu hình test: {pl['test_configs']}")
@@ -274,6 +276,8 @@ def run(ctx, stage: str) -> None:
     v = view(cfg)
     if stage not in STAGES:
         raise SystemExit(stage)
+    from .pathfam_verify import check_frozen
+    check_frozen(cfg)
     if stage == "test":
         if not cfg["_debug"] and not os.path.exists(lock_path(cfg)):
             raise SystemExit(f"pathfam-test cần khoá: bash scripts/run.sh pathfam-lock (chưa thấy {lock_path(cfg)})")
