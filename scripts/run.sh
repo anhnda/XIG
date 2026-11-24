@@ -10,13 +10,15 @@
 #   sampling-infid-e1a | sampling-infid-e1b-dev | sampling-infid-e1b-test | sampling-infid-e2   (cần khoá)
 #   infid-posthoc            kiểm toán sau kiểm định, không GPU → runs_probe/pilot/infid/INFID_POSTHOC_REPORT.md
 #   infid-freeze             đóng băng kết quả (sha256 mọi CSV / báo cáo / khoá) → runs_probe/pilot/infid/FROZEN.json
+#   budget-dev1 → budget-dev2 → budget-lock → budget-test   nghiên cứu BUDGET (J ở ngân sách gradient cố định)
+#                            → runs_probe/pilot/infid/INFID_BUDGET_REPORT.md (dựng lại: budget-report)
 #   *-report                 dựng lại báo cáo từ CSV: toy-report, pathscore-report, pathscore-infid-report, quad-check-report,
 #                            sampling-infid-report
 #   <lệnh>-debug             bản debug của mọi lệnh trên (ít ảnh, ít bước; ghi vào runs_probe_debug/)
 # env: CFG=config.yaml, EXTRA="--device cuda:1"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-STAGE=${1:?lệnh: test|toy|toy-large|pathscore|pathscore-infid-decomp|quad-check|sampling-infid-pilot|infid-lock|sampling-infid-e1a|sampling-infid-e1b-dev|sampling-infid-e1b-test|sampling-infid-e2|*-report|*-debug}
+STAGE=${1:?lệnh: test|toy|toy-large|pathscore|pathscore-infid-decomp|quad-check|sampling-infid-pilot|infid-lock|sampling-infid-e1a|sampling-infid-e1b-dev|sampling-infid-e1b-test|sampling-infid-e2|budget-dev1|budget-dev2|budget-lock|budget-test|*-report|*-debug}
 CFG=${CFG:-config.yaml}
 EXTRA=${EXTRA:-}
 PY="python -m probe --config $CFG $EXTRA"

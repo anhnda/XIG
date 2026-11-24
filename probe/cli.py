@@ -21,6 +21,12 @@ Proposal "Lấy mẫu đường SPI theo infidelity" (mục infid:, kết quả 
   infid-posthoc            kiểm toán sau kiểm định (không GPU): H3b, E2 theo cặp, metric ngoài, J(K), độ nhạy C_D
                            → infid/INFID_POSTHOC_REPORT.md
   infid-freeze             đóng băng: sha256 mọi CSV / báo cáo / khoá / config / mã nguồn → infid/FROZEN.json
+Nghiên cứu BUDGET (mục budget:, docs/PROTOCOL_BUDGET.md; kết quả infid/budget/ + infid/INFID_BUDGET_REPORT.md):
+  budget-dev1              G1: α × coupling × K ở ngân sách B (dev) → budget/selection_dev1.json
+  budget-dev2              G2: N, họ patch/hier, G ở cùng B (dev, quy tắc dừng theo chiều) → budget/selection_dev2.json
+  budget-lock              khoá tiêu chí + lựa chọn cuối → budget/budget_prereg.json
+  budget-test              G3 + G4: ảnh test mới, θ*(B) vs SPI α = 10 / α = 0,1 / IG cùng ngân sách, 8 D, metric ngoài — cần khoá
+  budget-report            dựng lại INFID_BUDGET_REPORT.md
 Chạy lại sẽ bỏ qua phần đã có trong cache (cùng hash config).
 """
 
@@ -32,7 +38,8 @@ from . import config as C
 
 CMDS = ["toy", "toy-large", "toy-report", "pathscore", "pathscore-report", "pathscore-infid-decomp", "pathscore-infid-report",
         "quad-check", "quad-check-report", "sampling-infid-pilot", "infid-lock", "sampling-infid-e1a", "sampling-infid-e1b-dev",
-        "sampling-infid-e1b-test", "sampling-infid-e2", "sampling-infid-report", "infid-posthoc", "infid-freeze"]
+        "sampling-infid-e1b-test", "sampling-infid-e2", "sampling-infid-report", "infid-posthoc", "infid-freeze",
+        "budget-dev1", "budget-dev2", "budget-lock", "budget-test", "budget-report"]
 
 
 def main(argv=None) -> None:
@@ -76,6 +83,14 @@ def main(argv=None) -> None:
     elif cmd == "infid-freeze":
         from . import infid_posthoc as PH
         PH.freeze(cfg)
+    elif cmd.startswith("budget-"):
+        from . import budget_opt as BO
+        if cmd == "budget-lock":
+            BO.lock(cfg)
+        elif cmd == "budget-report":
+            BO.write_report(cfg)
+        else:
+            BO.run(ctx(), cmd[len("budget-"):])
     elif cmd == "sampling-infid-report":
         from . import sampling_infid as SI
         SI.write_report(cfg)

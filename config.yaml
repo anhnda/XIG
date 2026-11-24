@@ -170,6 +170,62 @@ infid:
     pointing_tol: 15
     top_frac: 0.05
 
+# ─────────────────────────────────────────────────────────────────────────────
+# BUDGET — nghiên cứu tiếp theo (docs/PROTOCOL_BUDGET.md): chọn θ*(B) = argmin J_D(θ, K) với B = K·N·M cố định.
+# Khoá riêng (budget/budget_prereg.json), ảnh riêng (fresh 700–731 dev, 800–847 test), KHÔNG đụng khoá / kết quả infid cũ.
+# Dùng chung infid.D (định nghĩa D, n_sel, n_eval). Kết quả: runs_probe/pilot/infid/budget/ + infid/INFID_BUDGET_REPORT.md
+budget:
+  protocol:
+    rule: rand
+    M: 1
+    budgets: [256, 1024]               # B chính (= K 4 và 16 ở N = 64) — tiêu chí chính + Holm qua 2 B
+    budgets_secondary: [128, 512, 2048]  # B phụ (K 2, 8, 32 ở N = 64) — mô tả
+    Ks: [1, 2, 4, 8, 16, 32]
+    check_K: [4, 16]                   # kiểm J thực nghiệm bằng ensemble thật (nhóm rời) so với L + V_K
+    min_excess_reduction: 0.20         # r₀: R(B) = [J(base) − J(θ*)] / [J(base) − sàn] ≥ 20 %
+    dim_min_gain: 0.05                 # G2: một chiều chỉ vào tập cuối nếu TB J giảm ≥ 5 % so với nghiệm G1 …
+    dim_min_prob: 0.80                 # … và P_boot(tốt hơn) ≥ 0,8 (trên dev, bộ ô chọn)
+    alpha: 0.05
+    bootstrap: 10000
+    seed: 31
+    floor_grids: [14]
+    floor_lams: [0.0, 1.0e-3, 1.0e-2, 1.0e-1]
+    floor_folds: 4
+  sets: [del_sq]                       # D dùng để CHỌN (dev); D đầu tiên = D chính
+  dev: {split: fresh, offset: 700, n_images: 32}
+  stage1:                              # G1: α × coupling × K (coupling, K suy từ cùng cặp đường)
+    m: 32
+    configs:
+      - {family: spi, alpha: 0.1, N: 64}
+      - {family: spi, alpha: 0.3, N: 64}
+      - {family: spi, alpha: 1, N: 64}
+      - {family: spi, alpha: 10, N: 64}
+  stage2:                              # G2: chỉ top-k α của G1; dùng lại hàng N = 64 của G1
+    m: 16
+    alphas: auto
+    top_k: 3
+    N: [32, 64, 128]
+    N_family: 64
+    families: {patch: {G: [7, 14]}, hier: {G: [7, 14], eta: [0.5]}}
+  test:
+    split: fresh
+    offset: 800
+    n_images: 48
+    m: 32
+    selection: dev2                    # đổi thành dev1 nếu bỏ G2 (phải trước budget-lock)
+    baseline: {family: spi, alpha: 10, N: 64}
+    prior: {family: spi, alpha: 0.1, N: 64}    # nghiệm H3 đã xác nhận ở nghiên cứu trước
+    sets: [del_sq, ins_sq, sym_sq, frac25, frac50, frac75, del_sq_blur, del_sp]
+    ig: true
+    ig_N: 64
+    ig_repeats: 32
+    external: true                     # G4 tích hợp: metric ngoài ở K của ngân sách + trên Ē của 2m đường
+    road: {fracs: [0.1, 0.3, 0.5, 0.7, 0.9], noise: 0.01, iters: 1000, tol: 1.0e-5}
+    insdel_steps: 50
+    pointing_tol: 15
+    top_frac: 0.05
+  gpu_minutes: {dev1: 240, dev2: 180, test: 240}   # trần GPU đặt trước (ước tính theo số gradient); vượt ⇒ dừng trước khi chạy
+
 debug:
   paths:
     spi10:  {steps: 8}
@@ -194,6 +250,15 @@ debug:
           ig_repeats: 2}
     e2: {split: pilot, offset: 8, n_images: 1, m: 2, sets: [del_sq, ins_sq, frac50, del_sq_blur, del_sp], insdel_steps: 10,
          road: {fracs: [0.2, 0.8], iters: 200}}
+  budget:
+    protocol: {budgets: [32, 64], budgets_secondary: [16], Ks: [1, 2, 4, 8], check_K: [4], bootstrap: 200,
+               floor_lams: [0.0, 1.0e-2], floor_folds: 2}
+    dev: {n_images: 2}
+    stage1: {m: 4, configs: [{family: spi, alpha: 0.1, N: 8}, {family: spi, alpha: 10, N: 8}]}
+    stage2: {m: 4, top_k: 2, N: [4, 8, 16], N_family: 8, families: {patch: {G: [7]}, hier: {G: [7], eta: [0.5]}}}
+    test: {n_images: 2, m: 4, baseline: {family: spi, alpha: 10, N: 8}, prior: {family: spi, alpha: 0.1, N: 8},
+           sets: [del_sq, ins_sq, del_sp], ig_N: 8, ig_repeats: 8, insdel_steps: 10, road: {fracs: [0.2, 0.8], iters: 200}}
+    gpu_minutes: {dev1: null, dev2: null, test: null}
 
 # ─────────────────────────────────────────────────────────────────────────────
 local:
