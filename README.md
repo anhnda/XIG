@@ -28,6 +28,7 @@ bash scripts/run.sh sampling-infid-e1a       # E1a chính: H1 (+ H2 khi bật in
 bash scripts/run.sh sampling-infid-e1b-dev   # E1b dev: chọn cấu hình → infid/e1b_selection.json (không ghi đè)
 bash scripts/run.sh sampling-infid-e1b-test  # E1b test: H3
 bash scripts/run.sh sampling-infid-e2        # E2: nhiều D, metric ngoài, (tuỳ chọn) ViT
+bash scripts/run.sh infid-posthoc            # kiểm toán sau kiểm định, không GPU → infid/INFID_POSTHOC_REPORT.md
 ```
 
 Mỗi lệnh có bản `-debug` (vd. `sampling-infid-pilot-debug`) và lệnh `*-report` dựng lại báo cáo từ CSV. Bị ngắt thì chạy
@@ -44,6 +45,7 @@ lại cùng lệnh: phần đã xong (cùng hash) được bỏ qua.
 | `probe/toy_spi.py` | E-toy nhỏ / lớn, coverage |
 | `probe/infid_e0.py` | E0 (`pathscore-infid-decomp`) |
 | `probe/infid_quad.py` | E-quadrature (`quad-check`) |
+| `probe/infid_posthoc.py` | kiểm toán sau kiểm định (H3b không kẹp log, E2 theo cặp 8 D, metric ngoài theo cặp, J(K) và K*, độ nhạy C_D post hoc) |
 | `probe/sampling_infid.py` | E1a pilot / chính, E1b dev / test, E2, `infid-lock`, báo cáo quyết định H1–H4 |
 | `probe/pathscore.py`, `probe/pathscore_metrics.py`, `probe/pathbank.py` | PATHSCORE (đầu vào E0): bản đồ từng đường SPI (khoá ngẫu nhiên của P4 giữ nguyên) và metric |
 | `probe/ctx.py`, `config.py`, `data.py`, `model.py`, `metrics.py`, `paths.py`, `quad.py`, `report.py`, `plots.py` | nền: ngữ cảnh / dữ liệu / mô hình / sampler Dirichlet / gradient theo lô / bảng |

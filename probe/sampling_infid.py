@@ -966,7 +966,8 @@ def paired_alpha_report(cfg: dict, p, ref: str, set_name: str, ci, title: str, p
                 continue
             dv = (j.c - j.r).values
             nclip = int(((j.c <= 0) | (j.r <= 0)).sum())
-            lr = np.log(j.c.clip(lower=1e-6).values / j.r.clip(lower=1e-6).values)
+            pos = ((j.c > 0) & (j.r > 0)).values                                    # log chỉ trên ảnh có L̂ > 0; KHÔNG kẹp
+            lr = np.log(j.c.values[pos] / j.r.values[pos]) if pos.sum() >= 2 else np.array([np.nan, np.nan])
             loo_d, loo_r = _loo(dv), _loo(lr)
             imax = int(np.argmax(np.abs(dv)))
             stable = bool((loo_d < 0).all() or (loo_d > 0).all())
@@ -974,7 +975,8 @@ def paired_alpha_report(cfg: dict, p, ref: str, set_name: str, ci, title: str, p
                          "ảnh cải thiện (d<0)": f"{int((dv < 0).sum())}/{len(dv)}", "LOO TB d [min, max]": f"[{loo_d.min():.3g}, {loo_d.max():.3g}]",
                          "dấu ổn định khi bỏ 1 ảnh": stable, "ảnh |d| lớn nhất": f"{j.index[imax]} ({dv[imax]:+.3g})",
                          "TB log-tỷ số [CI]": _ci_str(ci(lr)), "trung vị log-tỷ số": float(np.median(lr)),
-                         "LOO log-tỷ số [min, max]": f"[{loo_r.min():.3g}, {loo_r.max():.3g}]", "L ≤ 0 bị kẹp": nclip})
+                         "LOO log-tỷ số [min, max]": f"[{loo_r.min():.3g}, {loo_r.max():.3g}]",
+                         "L̂ ≤ 0 (bỏ khỏi log, không kẹp)": nclip})
             m_, lo, hi = ci(lr)
             trade.setdefault(c, {})[dn] = (f"{m_:+.2f} [{lo:+.2f}, {hi:+.2f}]" if np.isfinite(lo) else f"{m_:+.2f}")
     out.append("**Chênh lệch theo cặp ảnh** (d < 0 / log-tỷ số < 0 ⇒ cấu hình tốt hơn tham chiếu):\n")
@@ -1062,9 +1064,11 @@ def h3_table(cfg: dict, out: str, ci) -> str:
             dec = ("H3 (chính): " + ST.decide(lo, hi, pr["delta3"])) if sel["chosen_name"] != cname(b["baseline"]) else "trùng baseline"
         else:
             dec = "H3b (đối chứng riêng, mô tả): " + ST.decide(lo, hi, pr["delta3"])
-        lr = np.log(j.ot.clip(lower=1e-12) / j.ch.clip(lower=1e-12))
+        npos = int(((j.ot <= 0) | (j.ch <= 0)).sum())
+        lr_s = (_ci_str(ci(np.log(j.ot / j.ch))) if npos == 0
+                else f"không ước lượng đáng tin ({npos} ảnh có L̂ ≤ 0; không kẹp — xem INFID_POSTHOC_REPORT.md mục A)")
         rows.append({"so với": nm, "n ảnh": len(j), f"giảm L_D(μ) ({sel['chosen_name']})": f"{m_:.4g} [{lo:.4g}, {hi:.4g}]",
-                     "log-infid theo cặp": _ci_str(ci(lr)), "quyết định": dec})
+                     "log-infid theo cặp": lr_s, "quyết định": dec})
     s = md(pd.DataFrame(rows))
     s += ("\nH3 = so với SPI baseline trên ảnh test chưa dùng để chọn α (bộ ô đánh giá độc lập). So sánh với IG là đối chứng RIÊNG, "
           "báo cáo tách, không gộp vào kết luận H3. L_D(μ_IG) đã khử nhiễu quadrature: L(Ā) − σ̂²_IG / r.\n")
