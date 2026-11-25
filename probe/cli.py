@@ -49,6 +49,8 @@ PATH_FAMILIES (docs/PATH_FAMILIES_AUDIT.md, docs/PATH_FAMILIES_PROTOCOL.md):
   pathfam-signdiag         GPU, hậu kiểm: chẩn đoán có dấu / không dấu trên ảnh test đã khoá → infid/pathfam/PATHFAM_SIGNED_UNSIGNED.md
   pathfam-signdiag2        GPU, hậu kiểm vòng 2: thang đo β (trong / ngoài mẫu), so sánh cùng h-N-K, InsDel theo nền, completeness
                            → infid/pathfam/PATHFAM_SIGNDIAG2_AUDIT.md;  pathfam-signdiag2-report: dựng lại (CPU)
+  pathfam-final-audit      CPU: β = (‖d‖/‖y‖)·cos (ảnh / chung / ngoài mẫu), mô phỏng luật K^{−1/2} completeness, khoá chẩn đoán
+                           → infid/pathfam/PATHFAM_FINAL_AUDIT.md + DIAG_LOCK.json
   pathfam-freeze           đóng băng PATHFAM (sha256 artifact, seed, σ) → infid/pathfam/FROZEN.json; chặn dev / lock / test
 Chạy lại sẽ bỏ qua phần đã có trong cache (cùng hash config).
 """
@@ -67,7 +69,7 @@ CMDS = ["toy", "toy-large", "toy-report", "pathscore", "pathscore-report", "path
         "pathfam-audit", "pathfam-plan", "pathfam-dev", "pathfam-lock", "pathfam-test", "pathfam-report",
         "pathfam-verify", "pathfam-diag", "pathfam-theory", "pathfam-freeze",
         "pathfam-proofcheck", "pathfam-signdiag", "pathfam-signdiag-report",
-        "pathfam-signdiag2", "pathfam-signdiag2-report"]
+        "pathfam-signdiag2", "pathfam-signdiag2-report", "pathfam-final-audit"]
 
 
 def main(argv=None) -> None:
@@ -126,6 +128,9 @@ def main(argv=None) -> None:
     elif cmd == "pathfam-proofcheck":
         from . import proof_check as PCK
         PCK.run(cfg)
+    elif cmd == "pathfam-final-audit":
+        from . import pathfam_final as PFF
+        PFF.run(cfg)
     elif cmd in ("pathfam-signdiag2", "pathfam-signdiag2-report"):
         from . import signdiag2 as SD2
         SD2.run(ctx()) if cmd == "pathfam-signdiag2" else SD2.report(cfg)

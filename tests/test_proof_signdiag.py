@@ -141,3 +141,23 @@ def test_signdiag2_report_offline(tmp_path):
     txt = open(S2.report(cfg)).read()
     for key in ("## 1. Thang đo", "## 2. So sánh có kiểm soát", "## 3. InsDel", "## 4. Completeness", "τ(chan_cancel, infid)"):
         assert key in txt
+
+
+def test_final_audit_beta_and_completeness(tmp_path):
+    from probe import pathfam_final as FF
+    yy, yd, dd = np.array([4.0, 1.0, 2.0]), np.array([2.0, 0.5, -0.4]), np.array([1.0, 1.0, 3.0])
+    bp = FF.beta_parts(yy, yd, dd)
+    assert np.allclose(bp["beta"], yd / yy) and np.allclose(bp["Lopt"], 1 - yd ** 2 / (yy * dd))
+    assert np.allclose(bp["L1"], FF.L_beta(1.0, yy, yd, dd))
+    b = FF.pooled_beta(yy, yd, dd)
+    grid = np.linspace(-1, 2, 3001)
+    assert abs(grid[np.argmin([FF.L_beta(x, yy, yd, dd).sum() for x in grid])] - b) < 2e-3
+    lo = FF.loio_beta(yy, yd, dd)
+    assert lo[0] == pytest.approx(FF.pooled_beta(yy[1:], yd[1:], dd[1:]))
+    r = FF.completeness_sim(reps=600, nb=300, Ks=(2, 8, 32))
+    for v in r.values():
+        assert -0.62 < v["slope"] < -0.38
+    cfg = C.load(os.path.join(ROOT, "config.yaml"))
+    cfg["local"] = {**cfg.get("local", {}), "out": str(tmp_path / "runs")}
+    rec = FF.lock_diag(cfg)
+    assert "insdel_signed_blur" in rec["excluded"] and "insdel_signed_black" in rec["admissible_metrics"]

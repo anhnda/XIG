@@ -46,3 +46,16 @@ Với nền nhất quán, xếp hạng có dấu đúng chiều (+0,64) còn kh�
   dấu là nền đen. Kết luận H-SU của vòng 1 về InsDel được coi là **không diễn giải được**; về IoU / năng lượng vẫn đọc được.
 - Hoà: InsDel xếp hạng bằng `argsort` không phá hoà; IoU dùng hoán vị phá hoà cố định. Với bản đồ có nhiều pixel bằng 0 tuyệt đối (không
   xảy ra với attribution liên tục) điều này mới có ảnh hưởng.
+
+## 4. Khoá chẩn đoán (sau signdiag2; `pathfam-final-audit` → `pathfam/DIAG_LOCK.json`)
+
+| Metric | Trạng thái |
+|---|---|
+| `insdel_abs_blur` | endpoint ngoài đã khoá — giữ nguyên, kèm ghi chú lệch nền |
+| `insdel_abs_black`, `insdel_signed_black` | chẩn đoán có dấu / không dấu **duy nhất được diễn giải** cho InsDel (nền nhất quán với attribution) |
+| `iou_abs`, `iou_pos`, `energy_abs`, `energy_pos` | chẩn đoán (không dùng nền) |
+| `insdel_signed_blur` | **LOẠI** khỏi mọi diễn giải |
+| kết luận H-SU vòng 1 về InsDel | **LOẠI** |
+
+Mọi so sánh cùng exploration (cùng h, N, K) là hậu kiểm mô tả trên tập test đã dùng; không tạo tuyên bố xác nhận. DIAG_LOCK.json băm
+signdiag / signdiag2 CSV và báo cáo tại thời điểm khoá.

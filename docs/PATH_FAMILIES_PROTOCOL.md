@@ -125,3 +125,9 @@ so sánh cùng h-N-K mà không chạy lại. `pathfam-signdiag2` dựng lại b
 cấu hình đối ứng spi / ln / cmix cùng h, N = 32 (chỉ để so sánh có kiểm soát), và lưu: yᵀy, yᵀd, dᵀd trên bộ chọn và bộ đánh giá (β trong /
 ngoài mẫu), F(x), F(x′), ΣA cho bản đồ lồng nhau K ∈ {2, 4, 8, 16, 32} và Ē, InsDel có dấu / không dấu với nền blur VÀ nền đen. Định nghĩa
 metric và phát hiện lệch nền: `docs/PATHFAM_METRIC_AUDIT.md`. Sau vòng này đóng phần thực nghiệm (`pathfam-freeze`).
+
+**Kiểm toán cuối** (`pathfam-final-audit`, CPU): (1) β = (‖d‖/‖y‖)·cos(y, d) theo ảnh; L ở β = 1 (đã khoá), β riêng từng ảnh (trong mẫu, cross-fit ô —
+chẩn đoán, KHÔNG triển khai được vì dùng ΔF_S của chính ảnh), β chung (trong mẫu) và β chung ngoài mẫu theo ảnh (bỏ-một-ảnh — hiệu chỉnh
+triển khai được duy nhất); (2) luật completeness K^{−1/2}: mô phỏng CPU với cầu phương `rand` M = 1, cặp `rev` độc lập, thiết kế lồng nhau và
+độc lập — độ dốc −0,496 [−0,508; −0,483] và −0,492 [−0,503; −0,481], sai số có dấu có CI chứa 0 ở mọi K (4000 lần lặp); cùng phân tích
+trên dữ liệu thật với CI theo ảnh; (3) khoá chẩn đoán (`DIAG_LOCK.json`). Thứ tự đóng: `pathfam-final-audit` → `pathfam-freeze`.

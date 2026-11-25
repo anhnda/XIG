@@ -21,6 +21,7 @@
 #   pathfam-dev → pathfam-lock → pathfam-test   Phase 1 (GPU) → runs_probe/pilot/infid/INFID_PATHFAM_REPORT.md
 #   pathfam-verify / pathfam-diag / pathfam-theory / pathfam-proofcheck / pathfam-freeze   CPU: kiểm toán, J ↔ metric ngoài, lý thuyết, đóng băng
 #   pathfam-signdiag         GPU, hậu kiểm: có dấu / không dấu → runs_probe/pilot/infid/pathfam/PATHFAM_SIGNED_UNSIGNED.md
+#   pathfam-final-audit      CPU: β, completeness K^{−1/2}, khoá chẩn đoán → .../pathfam/PATHFAM_FINAL_AUDIT.md
 #   pathfam-signdiag2        GPU, hậu kiểm vòng 2 (β, cùng h-N-K, InsDel theo nền, completeness) → .../pathfam/PATHFAM_SIGNDIAG2_AUDIT.md
 #   *-report                 dựng lại báo cáo từ CSV: toy-report, pathscore-report, pathscore-infid-report, quad-check-report,
 #                            sampling-infid-report
@@ -28,7 +29,7 @@
 # env: CFG=config.yaml, EXTRA="--device cuda:1"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-STAGE=${1:?lệnh: test|toy|toy-large|pathscore|pathscore-infid-decomp|quad-check|sampling-infid-pilot|infid-lock|sampling-infid-e1a|sampling-infid-e1b-dev|sampling-infid-e1b-test|sampling-infid-e2|budget-dev1|budget-dev2|budget-lock|budget-test|budget-audit|budget2-dev|budget2-lock|budget2-test|budget2-audit|budget2-freeze|pathfam-audit|pathfam-plan|pathfam-dev|pathfam-lock|pathfam-test|pathfam-verify|pathfam-diag|pathfam-theory|pathfam-freeze|pathfam-proofcheck|pathfam-signdiag|pathfam-signdiag2|*-report|*-debug}
+STAGE=${1:?lệnh: test|toy|toy-large|pathscore|pathscore-infid-decomp|quad-check|sampling-infid-pilot|infid-lock|sampling-infid-e1a|sampling-infid-e1b-dev|sampling-infid-e1b-test|sampling-infid-e2|budget-dev1|budget-dev2|budget-lock|budget-test|budget-audit|budget2-dev|budget2-lock|budget2-test|budget2-audit|budget2-freeze|pathfam-audit|pathfam-plan|pathfam-dev|pathfam-lock|pathfam-test|pathfam-verify|pathfam-diag|pathfam-theory|pathfam-freeze|pathfam-proofcheck|pathfam-signdiag|pathfam-signdiag2|pathfam-final-audit|*-report|*-debug}
 CFG=${CFG:-config.yaml}
 EXTRA=${EXTRA:-}
 PY="python -m probe --config $CFG $EXTRA"

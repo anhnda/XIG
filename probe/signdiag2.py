@@ -237,7 +237,7 @@ def report(cfg: dict) -> str:
         cols = [c for c in ("insdel_abs_blur", "insdel_signed_blur", "insdel_abs_black", "insdel_signed_black") if c in g and g[c].notna().any()]
         if not cols:
             continue
-        r = {"bản đồ": est}
+        r = {"bản đồ": est, "ghi chú": "insdel_signed_blur LOẠI khỏi diễn giải (lệch nền) — xem DIAG_LOCK.json"}
         for c in cols:
             v = g[c].dropna().values
             lo, hi = ci_of(v[boot_idx(len(v), nb, seed)].mean(1), al)
