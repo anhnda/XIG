@@ -161,3 +161,47 @@ def test_final_audit_beta_and_completeness(tmp_path):
     cfg["local"] = {**cfg.get("local", {}), "out": str(tmp_path / "runs")}
     rec = FF.lock_diag(cfg)
     assert "insdel_signed_blur" in rec["excluded"] and "insdel_signed_black" in rec["admissible_metrics"]
+
+
+def test_completeness_blocks_and_slope_parts():
+    from probe import pathfam_final as FF
+    rng = np.random.default_rng(0)
+    n = 3000
+    sig, b = np.exp(0.5 * rng.standard_normal(n)), 0.3 * rng.standard_normal(n)
+    pairs = b[:, None] + sig[:, None] * rng.standard_normal((n, 16))
+    S = np.stack([pairs[:, :k].mean(1) for k in (1, 2, 4, 8, 16)], 1)
+    B, nn = FF.blocks_from_nested(S)
+    assert np.allclose(B[:, 0], pairs[:, 0]) and np.allclose(B[:, 1], pairs[:, 1]) and np.allclose(B[:, 4], pairs[:, 8:].sum(1))
+    m, s2 = FF.within_var(B, nn)
+    assert np.allclose(m, pairs.mean(1))
+    assert abs(s2.mean() / (sig ** 2).mean() - 1) < 0.06                     # không chệch cho σ², không bị b_i làm phồng
+    assert abs((m ** 2 - s2 / 16).mean() - (b ** 2).mean()) < 0.02            # b̂² không chệch
+    sp = FF.slope_parts(S)
+    assert sp[0] == pytest.approx(sp[1] + sp[2])                              # phân rã chính xác
+    # chuẩn, không lệch: độ dốc ≈ −½; có b_i: phẳng hơn
+    w = sig[:, None] * rng.standard_normal((n, 16))
+    z = np.stack([w[:, :k].mean(1) for k in (1, 2, 4, 8, 16)], 1)
+    assert -0.56 < FF.slope_parts(z)[0] < -0.44 and FF.slope_parts(S)[0] > -0.45
+
+
+def test_slope_shape_sim_directions():
+    from probe import pathfam_final as FF
+    rows = {(r["hình dạng sai số cặp"], r["độ lệch riêng ảnh tb"]): r for r in
+            FF.slope_shape_sim(128, 0.5, shapes=("normal", "spike"), tbs=(0.0, 0.3), R=40, nb=60)}
+    e = {k: float(v["E độ dốc TB|err| (SD)"].split()[0]) for k, v in rows.items()}
+    assert abs(e[("normal", 0.0)] + 0.5) < 0.05
+    assert e[("spike", 0.0)] > -0.42 and e[("normal", 0.3)] > -0.45
+
+
+def test_completeness_diag_offline():
+    import pandas as pd
+    from probe import pathfam_final as FF
+    rng = np.random.default_rng(1)
+    rows = []
+    for i in range(40):
+        p = np.exp(rng.normal()) * rng.standard_normal(16)
+        for c, K in zip((1, 2, 4, 8, 16), (2, 4, 8, 16, 32)):
+            rows.append(dict(config="spi_a10_N32", estimator=f"rev_K{K}", K=K, image=i, sumA=1.0 + p[:c].mean(), dF=1.0))
+        rows.append(dict(config="spi_a10_N32", estimator="mean_all", K=32, image=i, sumA=1.0 + p.mean(), dF=1.0))
+    out = "\n".join(FF.completeness_diag(pd.DataFrame(rows), 50, 0, 0.05, R=10))
+    assert "### 2c" in out and "### 2d" in out and "spi_a10_N32" in out

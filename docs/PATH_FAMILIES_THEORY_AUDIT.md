@@ -35,3 +35,22 @@ Kiểm thử: `pytest tests/` 86 passed (gồm các kiểm symbolic và MC dư�
 2. Định lý 4: bổ sung hai kiểu chồng chỉ số còn thiếu; thêm đồng nhất thức Γ = Var ∫Z dt.
 3. Hệ quả 3a–3b: ghi trường hợp phân phối khác nhau giữa feature (D_j).
 4. "Diễn giải kích hoạt" nâng thành Mệnh đề 3d có chứng minh, kèm giới hạn đụng độ trên lưới.
+
+## 4. Bản định lý–chứng minh cho paper (vòng cuối)
+
+`PATH_FAMILIES_THEORY.md` được viết lại thành bản định lý–chứng minh: giả thiết đánh mã (P), (F1)/(F1′), (Poly_p), (I), (S), (M), (H), (E), (G) và
+bảng "kết luận nào dùng giả thiết nào". Bổ sung so với bản trước:
+
+| Phát biểu mới | Giả thiết | Kiểm |
+|---|---|---|
+| B1 quy tắc dây chuyền Stieltjes (vì sao cần liên tục) | (P) | chứng minh |
+| B5 `rand` không chệch cho luật nội suy $Q^N$ | (G), (F1)/(F1′) | đã chứng minh ở P0; MC completeness |
+| M3.3 phản ví dụ bậc 5 dạng giải tích: DP liên tục α = 1 cho 13/360, cmix λ = ½ cho 3/80, cùng D = 1/12, cùng $c$ | (I), (M), (H), (S) | sympy (moment Beta) |
+| M6.5 $L=(r-\cos)^2+\sin^2$; phần $L>1$ là thang đo | — | đại số |
+| H6.3 `rev` ở bậc 2 chỉ còn phương sai cầu phương ⇒ ρ ≤ 1 | (Poly_2), (S), (G) | từ Đ2.3 |
+| M7.1 sai số completeness = nhiễu cầu phương, mù với phương sai đường | (G), số học chính xác | MC |
+| M7.2 $\mathbb Ee_K^2=b^2+2\sigma^2/K$ mọi hình dạng; độ dốc RMS ∈ [−½, 0) | (S), (G) | `test_completeness_blocks_and_slope_parts` |
+| M7.3 phân rã TB\|·\| = RMS × G_K; cận Wasserstein (Goldstein 2010) | (G), b = 0 | mô phỏng §2d, `test_slope_shape_sim_directions` |
+
+Chẩn đoán độ nhọn tự chuẩn hoá (thử trong bản nháp §2c) bị **loại**: σ̂² ước lượng trong cùng ảnh từ 5 khối bị chính đuôi nặng làm phồng, nên
+thống kê không phát hiện được t₃ hay "đoạn trội" (mô phỏng: tỷ lệ phát hiện 0). Thay bằng phân rã chính xác độ dốc TB|·| = độ dốc RMS + độ dốc log G.

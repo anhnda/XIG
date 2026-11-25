@@ -10,6 +10,9 @@ E1a 32 ảnh × m = 16, E1b vòng 1 α ∈ {0,1; 0,3; 1; 10}, E0 thêm độ nh�
 Sửa đổi protocol 3: `docs/PROTOCOL_AMENDMENT_3.md` — RQ2 trước, H2 hoãn; so sánh α theo cặp ảnh (leave-one-out), bảng theo từng D
 và đánh đổi xoá / chèn, tách L = E_D / C_D.
 
+Paper (stochastic feature-wise path distributions): lý thuyết `docs/PATH_FAMILIES_THEORY.md` (định lý–chứng minh, giả thiết đánh mã),
+ranh giới tuyên bố `docs/PAPER_CLAIMS_AND_LIMITATIONS.md`, dàn ý `docs/PAPER_OUTLINE.md`, completeness ở K hữu hạn `docs/COMPLETENESS_SLOPE.md`.
+
 ## Chạy
 
 ```bash

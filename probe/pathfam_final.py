@@ -207,6 +207,134 @@ def completeness_real(t, nb: int, seed: int, al: float) -> list:
             md(pd.DataFrame(srows)), md(pd.DataFrame(rows))]
 
 
+def blocks_from_nested(S: np.ndarray) -> tuple:
+    """S (n_ảnh, 5): sai số trung bình của K = 2, 4, 8, 16, 32 đường LỒNG NHAU (= TB của 1, 2, 4, 8, 16 cặp đầu).
+    Trả tổng sai số theo khối cặp RỜI NHAU (kích thước 1, 1, 2, 4, 8) và kích thước khối."""
+    n = np.array([1, 1, 2, 4, 8], float)
+    c = np.array([1, 2, 4, 8, 16], float)
+    T = S * c                                                                # tổng của c cặp đầu
+    B = np.concatenate([T[:, :1], np.diff(T, axis=1)], axis=1)
+    return B, n
+
+
+def within_var(B: np.ndarray, n: np.ndarray) -> tuple:
+    """σ̂²_i (phương sai TB một cặp) không chệch và không phụ thuộc độ lệch riêng ảnh b_i: Σ_j n_j(B_j/n_j − m̂)²/(J − 1), m̂ = ΣB/Σn."""
+    m = B.sum(1) / n.sum()
+    s2 = (n * (B / n - m[:, None]) ** 2).sum(1) / (B.shape[1] - 1)
+    return m, s2
+
+
+KV = np.array([2, 4, 8, 16, 32], float)
+_SLOPE_W = np.linalg.pinv(np.vstack([np.log(KV), np.ones(5)]).T)[0]         # độ dốc OLS = _SLOPE_W @ y
+
+
+def slope_parts(S: np.ndarray) -> np.ndarray:
+    """S (..., n, 5). Phân rã CHÍNH XÁC: log TB|e_K| = log RMS_K + log G_K, G_K = TB|e_K| / RMS_K (tỷ số Geary gộp qua ảnh).
+    Trả (..., 3): độ dốc TB|·|, độ dốc RMS, độ dốc log G (cột 0 = cột 1 + cột 2)."""
+    ma = np.abs(S).mean(-2)
+    rm = np.sqrt((S ** 2).mean(-2))
+    return np.stack([np.log(ma) @ _SLOPE_W, np.log(rm) @ _SLOPE_W, np.log(ma / rm) @ _SLOPE_W], -1)
+
+
+def shape_draw(rng, shape: str, size: tuple) -> np.ndarray:
+    """Sai số một cặp chuẩn hoá (TB 0, phương sai 1) theo hình dạng: normal, uniform (đuôi nhẹ), t3 (đuôi nặng),
+    spike (mỗi đường: nhiễu nhỏ + 5 % xác suất một đoạn trội — mô hình 'một đoạn chứa phần lớn biến thiên gradient')."""
+    if shape == "normal":
+        return rng.standard_normal(size)
+    if shape == "uniform":
+        return (rng.random(size) - 0.5) * math.sqrt(12)
+    if shape == "t3":
+        return rng.standard_t(3, size) / math.sqrt(3)
+    if shape == "spike":
+        e = 0.3 * rng.standard_normal(size + (2,)) + (rng.random(size + (2,)) < 0.05) * rng.standard_normal(size + (2,)) * math.sqrt(0.91 / 0.05)
+        return e.mean(-1) * math.sqrt(2)
+    raise ValueError(shape)
+
+
+def slope_shape_sim(n: int, s: float, shapes=("normal", "uniform", "t3", "spike"), tbs=(0.0, 0.2), R: int = 300, nb: int = 300,
+                    seed: int = 0) -> list:
+    """Phân phối lấy mẫu của các độ dốc ở ĐÚNG thiết kế dữ liệu thật: n ảnh, σ_i log-chuẩn độ lệch s, 16 cặp độc lập lồng nhau K = 2…32,
+    bootstrap theo ảnh. tb: độ lệch riêng ảnh b_i ~ N(0, (tb·σ_i)²). Trả hàng: E và SD của từng độ dốc, độ phủ −½ của CI percentile."""
+    rows = []
+    c = np.array([1, 2, 4, 8, 16])
+    for shape in shapes:
+        for tb in tbs:
+            if tb and shape != "normal":
+                continue
+            rng = np.random.default_rng([seed, hash(shape) % 2 ** 31, int(tb * 1000)])
+            sig = np.exp(s * rng.standard_normal((R, n, 1)))
+            pairs = tb * sig[..., 0:1] * rng.standard_normal((R, n, 1)) + sig * shape_draw(rng, shape, (R, n, 16))
+            S = np.stack([pairs[..., :k].mean(-1) for k in c], -1)
+            sp = slope_parts(S)
+            cov = np.zeros(2)
+            for r in range(R):
+                bs = slope_parts(S[r][rng.integers(0, n, (nb, n))])
+                for j in range(2):
+                    cov[j] += np.quantile(bs[:, j], 0.025) <= -0.5 <= np.quantile(bs[:, j], 0.975)
+            rows.append({"hình dạng sai số cặp": shape, "độ lệch riêng ảnh tb": tb,
+                         "E độ dốc TB|err| (SD)": f"{sp[:, 0].mean():.3f} ({sp[:, 0].std():.3f})",
+                         "E độ dốc RMS (SD)": f"{sp[:, 1].mean():.3f} ({sp[:, 1].std():.3f})",
+                         "E độ dốc log G": f"{sp[:, 2].mean():.3f}",
+                         "độ phủ −½: TB|err|": cov[0] / R, "độ phủ −½: RMS": cov[1] / R})
+    return rows
+
+
+def completeness_diag(t, nb: int, seed: int, al: float, R: int = 300) -> list:
+    """Vì sao độ dốc log TB|err| theo log K trên CNN có thể khác −½ (dữ liệu signdiag2, không GPU).
+    Sự kiện cấu trúc: với tích phân CHÍNH XÁC, Σ_i A_i(Z) = ΔF cho MỌI đường ⇒ err chỉ là nhiễu cầu phương `rand` (U độc lập giữa đường,
+    giữa hai thành viên của cặp, giữa các cặp). Phân rã chính xác: độ dốc TB|·| = độ dốc RMS + độ dốc log G. Mô hình
+    E e_K² = E b² + 2σ²/K (đúng chính xác, mọi hình dạng, cặp độc lập) ⇒ độ dốc RMS lệch −½ trong kỳ vọng CHỈ khi E b² > 0;
+    độ dốc log G ≠ 0 ⇔ hình dạng phân phối thay đổi theo K (đuôi nặng ⇒ > 0, làm phẳng; đuôi nhẹ ⇒ < 0, làm dốc)."""
+    import pandas as pd
+    from .infid_posthoc import boot_idx, ci_of, fmt_ci
+    from .report import md
+    rows, svals = [], []
+    t = t.assign(err=t.sumA - t.dF)
+    for cfgn, g in t.groupby("config"):
+        q = g[g.estimator.str.startswith("rev_K")]
+        if sorted(int(k) for k in q.K.unique()) != [2, 4, 8, 16, 32]:
+            continue
+        S = q.pivot_table(index="image", columns="K", values="err", aggfunc="first").dropna()[[2, 4, 8, 16, 32]].values
+        idx = boot_idx(S.shape[0], nb, seed)
+        sp = slope_parts(S)
+        bs = slope_parts(S[idx])
+        B, n = blocks_from_nested(S)
+        m, s2 = within_var(B, n)
+        b2 = m ** 2 - s2 / 16.0                                              # ước lượng không chệch của b_i²
+        b2lo, b2hi = ci_of(b2[idx].mean(1), al)
+        mse32 = float((S[:, 4] ** 2).mean())
+        G = np.abs(S).mean(0) / np.sqrt((S ** 2).mean(0))
+        ok = s2 > 0
+        # độ phân tán log σ_i qua ảnh (trừ phần do σ̂² chỉ có 4 bậc tự do: Var log(χ²₄/4) = ψ'(2) = π²/6 − 1)
+        sl = float(np.sqrt(max(np.var(np.log(s2[ok])) - (math.pi ** 2 / 6 - 1), 0.0)) / 2) if ok.sum() > 2 else math.nan
+        svals.append(sl)
+        rows.append({"config": cfgn, "n ảnh": S.shape[0],
+                     "độ dốc TB|err| [CI]": fmt_ci(float(sp[0]), *ci_of(bs[:, 0], al), "{:.3f}"),
+                     "= độ dốc RMS [CI]": fmt_ci(float(sp[1]), *ci_of(bs[:, 1], al), "{:.3f}"),
+                     "+ độ dốc log G [CI]": fmt_ci(float(sp[2]), *ci_of(bs[:, 2], al), "{:.3f}"),
+                     "G ở K = 2 / 32 (chuẩn: 0,798)": f"{G[0]:.3f} / {G[4]:.3f}",
+                     "TB b̂² [CI]": fmt_ci(float(b2.mean()), b2lo, b2hi, "{:.3g}"),
+                     "b̂² / MSE(K = 32)": float(b2.mean() / mse32) if mse32 > 0 else math.nan,
+                     "SD log σ_i qua ảnh": sl})
+    out = ["### 2c. Vì sao độ dốc trên CNN có thể khác −½ (từ dữ liệu signdiag2, không GPU)\n",
+           "Bản đồ lồng nhau K = 2…32 là trung bình của 1, 2, 4, 8, 16 cặp đầu ⇒ khôi phục tổng sai số trên các khối cặp RỜI NHAU (1, 1, 2, 4, 8) "
+           "cho từng ảnh ⇒ σ̂²_i (phương sai một cặp, không phụ thuộc b_i) và b̂²_i = m̂_i² − σ̂²_i/16 (không chệch cho b_i²). Phân rã CHÍNH XÁC: "
+           "độ dốc TB|err| = độ dốc RMS + độ dốc log G với G_K = TB|e_K|/RMS_K. Vì E e_K² = E b² + 2σ²/K đúng với mọi hình dạng khi các cặp "
+           "độc lập, độ dốc RMS chỉ lệch −½ trong kỳ vọng khi E b² > 0 (riêng ước lượng log của nó có chệch Jensen khi đuôi nặng, xem 2d); "
+           "độ dốc log G ≠ 0 nghĩa là hình dạng phân phối hữu hạn K đang hội tụ về chuẩn (G = 0,798): đuôi nặng ⇒ G nhỏ ở K nhỏ ⇒ độ dốc TB|·| "
+           "phẳng hơn −½; đuôi nhẹ ⇒ dốc hơn. Độ lệch riêng ảnh b_i (nếu có) chưa xác định nguồn — không gọi là lỗi cài đặt khi chưa có bằng chứng "
+           "trực tiếp.\n", md(pd.DataFrame(rows))]
+    if rows:
+        s_use = float(np.nanmedian(svals)) if np.isfinite(np.nanmedian(svals)) else 1.0
+        n_use = int(np.median([r["n ảnh"] for r in rows]))
+        out += ["### 2d. Phân phối lấy mẫu của độ dốc ở đúng thiết kế (CPU, mô phỏng)\n",
+                f"n = {n_use} ảnh, SD log σ_i = {s_use:.2f} (trung vị ước lượng ở 2c), 16 cặp độc lập lồng nhau, bootstrap theo ảnh, R = {R} lần lặp. "
+                "Cho biết với cỡ mẫu và dải K này, độ dốc TB|err| dao động bao nhiêu và lệch hệ thống bao nhiêu chỉ do hình dạng phân phối "
+                "hữu hạn K hoặc do b_i — KHÔNG phải ước lượng cho CNN.\n",
+                md(pd.DataFrame(slope_shape_sim(n_use, s_use, R=R, nb=nb if nb < 300 else 300, seed=seed)))]
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. khoá chẩn đoán
 # ─────────────────────────────────────────────────────────────────────────────
@@ -255,6 +383,7 @@ def run(cfg: dict) -> str:
         L.append(md(pd.DataFrame(r["rows"])))
     if t is not None:
         L += completeness_real(t, nb, seed, al)
+        L += completeness_diag(t, nb, seed, al, R=40 if dbg else 300)
     rec = lock_diag(cfg)
     L += ["## 3. Khoá chẩn đoán (pathfam/DIAG_LOCK.json)\n",
           md(pd.DataFrame([{"metric": k, "trạng thái": v} for k, v in {**rec["admissible_metrics"], **rec["excluded"]}.items()])),
