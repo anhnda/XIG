@@ -205,3 +205,26 @@ def test_completeness_diag_offline():
         rows.append(dict(config="spi_a10_N32", estimator="mean_all", K=32, image=i, sumA=1.0 + p.mean(), dF=1.0))
     out = "\n".join(FF.completeness_diag(pd.DataFrame(rows), 50, 0, 0.05, R=10))
     assert "### 2c" in out and "### 2d" in out and "spi_a10_N32" in out
+
+
+def test_offset_shared_detects_common_bias():
+    import pandas as pd
+    from probe import pathfam_final as FF
+    rng = np.random.default_rng(2)
+    rows = []
+    n = 400
+    b = 0.8 * rng.standard_normal(n)                                         # độ lệch theo ảnh, chung mọi cấu hình
+    dF = rng.normal(5, 2, n)
+    for cfg, shared in (("a_N32", True), ("b_N32", True), ("c_N64", True), ("d_N32", False)):
+        for i in range(n):
+            e = (b[i] if shared else 0.0) + rng.standard_normal(16).mean()
+            rows.append(dict(config=cfg, estimator="rev_K32", K=32, image=i, sumA=dF[i] + e, dF=dF[i]))
+    out = "\n".join(FF.offset_shared(pd.DataFrame(rows), 200, 0, 0.05))
+    assert "### 2e" in out and "chỉ N = 32" in out
+    t = pd.DataFrame(rows)
+    t2 = t[t.config != "d_N32"]
+    X = t2.assign(err=t2.sumA - t2.dF).pivot_table(index="image", columns="config", values="err").values
+    s = X.sum(1)
+    cr = ((s ** 2 - (X ** 2).sum(1)) / (3 * 2)).mean()
+    assert abs(cr - (b ** 2).mean()) < 0.12
+    print(out)

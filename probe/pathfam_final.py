@@ -312,17 +312,21 @@ def completeness_diag(t, nb: int, seed: int, al: float, R: int = 300) -> list:
                      "độ dốc TB|err| [CI]": fmt_ci(float(sp[0]), *ci_of(bs[:, 0], al), "{:.3f}"),
                      "= độ dốc RMS [CI]": fmt_ci(float(sp[1]), *ci_of(bs[:, 1], al), "{:.3f}"),
                      "+ độ dốc log G [CI]": fmt_ci(float(sp[2]), *ci_of(bs[:, 2], al), "{:.3f}"),
-                     "G ở K = 2 / 32 (chuẩn: 0,798)": f"{G[0]:.3f} / {G[4]:.3f}",
+                     "G ở K = 2 / 32": f"{G[0]:.3f} / {G[4]:.3f}",
+                     "G tham chiếu chuẩn + không đồng nhất": float(math.sqrt(2 / math.pi) * math.exp(-sl ** 2 / 2)) if np.isfinite(sl) else math.nan,
                      "TB b̂² [CI]": fmt_ci(float(b2.mean()), b2lo, b2hi, "{:.3g}"),
                      "b̂² / MSE(K = 32)": float(b2.mean() / mse32) if mse32 > 0 else math.nan,
-                     "SD log σ_i qua ảnh": sl})
+                     "SD log σ_i qua ảnh": sl,
+                     "độ dốc RMS dự báo từ b̂², σ̂²": float(0.5 * np.log(np.clip(b2.mean() + s2.mean() * 2 / KV, 1e-300, None)) @ _SLOPE_W)})
     out = ["### 2c. Vì sao độ dốc trên CNN có thể khác −½ (từ dữ liệu signdiag2, không GPU)\n",
            "Bản đồ lồng nhau K = 2…32 là trung bình của 1, 2, 4, 8, 16 cặp đầu ⇒ khôi phục tổng sai số trên các khối cặp RỜI NHAU (1, 1, 2, 4, 8) "
            "cho từng ảnh ⇒ σ̂²_i (phương sai một cặp, không phụ thuộc b_i) và b̂²_i = m̂_i² − σ̂²_i/16 (không chệch cho b_i²). Phân rã CHÍNH XÁC: "
            "độ dốc TB|err| = độ dốc RMS + độ dốc log G với G_K = TB|e_K|/RMS_K. Vì E e_K² = E b² + 2σ²/K đúng với mọi hình dạng khi các cặp "
            "độc lập, độ dốc RMS chỉ lệch −½ trong kỳ vọng khi E b² > 0 (riêng ước lượng log của nó có chệch Jensen khi đuôi nặng, xem 2d); "
            "độ dốc log G ≠ 0 nghĩa là hình dạng phân phối hữu hạn K đang hội tụ về chuẩn (G = 0,798): đuôi nặng ⇒ G nhỏ ở K nhỏ ⇒ độ dốc TB|·| "
-           "phẳng hơn −½; đuôi nhẹ ⇒ dốc hơn. Độ lệch riêng ảnh b_i (nếu có) chưa xác định nguồn — không gọi là lỗi cài đặt khi chưa có bằng chứng "
+           "phẳng hơn −½; đuôi nhẹ ⇒ dốc hơn. G gộp qua ảnh có thang σ_i khác nhau thấp hơn 0,798 ngay cả khi sai số chuẩn: tham chiếu «chuẩn + không "
+           "đồng nhất» = 0,798·exp(−s²/2) với s = SD log σ_i (giả định σ_i log-chuẩn) — mức này không đổi theo K nên không ảnh hưởng độ dốc. "
+           "Cột «độ dốc RMS dự báo» dùng E e_K² = b̂² + 2σ̂²/K: so với độ dốc RMS quan sát để biết b̂² giải thích được bao nhiêu. Độ lệch riêng ảnh b_i (nếu có) chưa xác định nguồn — không gọi là lỗi cài đặt khi chưa có bằng chứng "
            "trực tiếp.\n", md(pd.DataFrame(rows))]
     if rows:
         s_use = float(np.nanmedian(svals)) if np.isfinite(np.nanmedian(svals)) else 1.0
@@ -333,6 +337,53 @@ def completeness_diag(t, nb: int, seed: int, al: float, R: int = 300) -> list:
                 "hữu hạn K hoặc do b_i — KHÔNG phải ước lượng cho CNN.\n",
                 md(pd.DataFrame(slope_shape_sim(n_use, s_use, R=R, nb=nb if nb < 300 else 300, seed=seed)))]
     return out
+
+
+def offset_shared(t, nb: int, seed: int, al: float) -> list:
+    """Độ lệch riêng ảnh có CHUNG giữa các cấu hình không. m̂_ic = sai số ở K = 32 (TB 16 cặp) của ảnh i, cấu hình c. Nhiễu cầu phương / đường
+    của hai cấu hình độc lập (luồng ngẫu nhiên theo tên cấu hình) ⇒ E[m̂_ic m̂_ic′] = E[b_ic b_ic′] CHÍNH XÁC, không cần trừ phương sai.
+    Nguồn theo ảnh không phụ thuộc họ đường (ΔF, số học ở đầu mút) ⇒ hiệp phương sai chéo ≈ b̂²; độ lệch riêng theo cấu hình ⇒ ≈ 0."""
+    import pandas as pd
+    from .infid_posthoc import boot_idx, ci_of, fmt_ci
+    from .report import md
+    t = t.assign(err=t.sumA - t.dF)
+    q = t[t.estimator.str.startswith("rev_K")]
+    q = q[q.K == 32]
+    if q.empty or q.config.nunique() < 2:
+        return []
+    Mx = q.pivot_table(index="image", columns="config", values="err", aggfunc="first").dropna()
+    dF = t.groupby("image").dF.first().reindex(Mx.index).values
+    rows = []
+    groups = {"mọi cấu hình": list(Mx.columns)}
+    n32 = [c for c in Mx.columns if c.endswith("_N32")]
+    if 1 < len(n32) < len(Mx.columns):
+        groups["chỉ N = 32"] = n32
+    for gname, cols in groups.items():
+        X = Mx[cols].values
+        n, C = X.shape
+        idx = boot_idx(n, nb, seed)
+
+        def cross(Y):
+            s = Y.sum(-1)
+            return ((s ** 2 - (Y ** 2).sum(-1)) / (C * (C - 1))).mean(-1)   # TB qua ảnh của TB m̂_c m̂_c′ (c ≠ c′)
+        cr = float(cross(X))
+        crb = cross(X[idx])
+        ms2 = float((X ** 2).mean())                                         # MSE(K = 32) gộp
+        sh = X.mean(1)
+        rk = pd.Series(sh).rank().values
+        rd = pd.Series(dF).rank().values
+        rho = float(np.corrcoef(rk, rd)[0, 1])
+        rhob = np.array([np.corrcoef(pd.Series(sh[i]).rank().values, pd.Series(dF[i]).rank().values)[0, 1] for i in idx])
+        rows.append({"nhóm": gname, "n ảnh": n, "số cấu hình": C,
+                     "TB m̂_c·m̂_c′ (c ≠ c′) = E b_c b_c′ [CI]": fmt_ci(cr, *ci_of(crb, al), "{:.3g}"),
+                     "÷ MSE(K = 32)": cr / ms2 if ms2 > 0 else math.nan,
+                     "Spearman(TB m̂ qua cấu hình, ΔF) [CI]": fmt_ci(rho, *ci_of(rhob, al), "{:.3f}")})
+    return ["### 2e. Độ lệch riêng ảnh có chung giữa các cấu hình không\n",
+            "m̂_ic = sai số completeness ở K = 32 của ảnh i với cấu hình c. Nhiễu của hai cấu hình độc lập ⇒ TB m̂_ic·m̂_ic′ (c ≠ c′) ước lượng "
+            "KHÔNG CHỆCH E[b_ic b_ic′] mà không cần trừ phương sai (khác b̂² ở 2c). Đọc: (a) dương rõ, cỡ b̂² ⇒ độ lệch theo ảnh, chung cho mọi họ "
+            "đường (nguồn khả dĩ: phép tính ΔF / số học ở đầu mút) — cần kiểm tra trực tiếp trước khi gọi tên nguồn; (b) ≈ 0 trong khi b̂² > 0 ⇒ "
+            "độ lệch (nếu có) phụ thuộc cấu hình; (c) ≈ 0 và b̂² ≈ 0 ⇒ không có bằng chứng độ lệch, độ phẳng của độ dốc là do lấy mẫu / đuôi nặng.\n",
+            md(pd.DataFrame(rows))]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -384,6 +435,7 @@ def run(cfg: dict) -> str:
     if t is not None:
         L += completeness_real(t, nb, seed, al)
         L += completeness_diag(t, nb, seed, al, R=40 if dbg else 300)
+        L += offset_shared(t, nb, seed, al)
     rec = lock_diag(cfg)
     L += ["## 3. Khoá chẩn đoán (pathfam/DIAG_LOCK.json)\n",
           md(pd.DataFrame([{"metric": k, "trạng thái": v} for k, v in {**rec["admissible_metrics"], **rec["excluded"]}.items()])),

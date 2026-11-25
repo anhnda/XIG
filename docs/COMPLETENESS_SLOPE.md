@@ -4,16 +4,20 @@ Phạm vi: hậu kiểm, mô tả. Dữ liệu: `signdiag2.csv` (ảnh / cấu h
 lại test, không chọn lại. Lý thuyết: `PATH_FAMILIES_THEORY.md` §7. Phân tích số: `pathfam-final-audit` §2b–2d (chạy lại lệnh này trên CPU để
 có §2c, §2d mới).
 
-## 1. Kết luận ngắn
+## 1. Kết luận (từ dữ liệu thật, `PATHFAM_FINAL_AUDIT.md` 2026-11-25)
 
-Độ dốc $-\tfrac12$ của **trung bình sai số tuyệt đối** theo $\log K$ là phát biểu **tiệm cận**. Thứ được đảm bảo chính xác ở mọi $K$ là
-(i) sai số có dấu có kỳ vọng 0 và (ii) $\mathbb Ee_K^2=b^2+2\sigma^2/K$. Với 128 ảnh và dải $K$ chỉ 1,2 thập phân, độ dốc quan sát có thể lệch
-$-\tfrac12$ vì ba cơ chế không liên quan tới lỗi cài đặt: hình dạng phân phối sai số ở $K$ nhỏ (M1), độ lệch riêng ảnh chưa xác định nguồn (M2),
-và nhiễu lấy mẫu/chệch Jensen khi thang sai số rất khác nhau giữa ảnh (M3). Mô phỏng CPU khớp $-\tfrac12$ vì chúng nằm đúng trong vùng mà cả ba
-cơ chế đều yếu (nhiều lần lặp, sai số gần chuẩn, thang đồng nhất). Không có bằng chứng — và không được tuyên bố — rằng độ lệch là lỗi cài đặt.
-
-Điều quan trọng hơn cho paper: theo Mệnh đề 7.1, $\sum_iA_i(Z)=\Delta F$ với **mọi** đường, nên sai số completeness chỉ đo **nhiễu cầu phương**,
-không đo phương sai đường của họ $Q$. Độ dốc completeness không nói gì về $V_1$, $J$ hay chất lượng sampler.
+1. **Không chệch: đạt.** Sai số completeness có dấu có CI 95 % chứa 0 ở 55/60 ô (12 cấu hình × 5 mức K) và ở **cả 12 cấu hình tại K = 32**.
+   5 ô không chứa 0 (kỳ vọng 3 nếu độc lập; P(≥ 5) = 0,18), 4 âm 1 dương, chỉ ở K ≤ 16, không có cấu hình nào lệch ở nhiều K.
+2. **Sai số tuyệt đối giảm theo K**: TB|err| ở K = 32 nhỏ hơn K = 2 từ 2,4× đến 4,2× (lý thuyết 4×); sai số tương đối TB|err|/(|ΔF| + τ) ở
+   K = 32 là 0,057–0,114 (τ = trung vị |ΔF| = 6,56).
+3. **Độ dốc TB|err| theo log K: −0,29 đến −0,52.** Hai cấu hình N = 64 (spi α = 0,1; α = 10) có CI chứa −½; 7/10 cấu hình N = 32 có CI loại −½,
+   tất cả theo hướng **phẳng hơn**.
+4. **Phân rã** (độ dốc TB|·| = độ dốc RMS + độ dốc log G) cho thấy độ lệch **không cùng một cơ chế** ở mọi cấu hình (§8). Với N = 64, khớp −½ là do
+   hai độ lệch triệt tiêu nhau (đuôi nặng ở K nhỏ làm phẳng, RMS ước lượng dốc hơn), không phải bằng chứng hành vi chuẩn. Với 4 cấu hình N = 32,
+   độ lệch nằm ở mức RMS với hình dạng gần chuẩn — chỉ có thể do độ lệch riêng ảnh hoặc do biến thiên lấy mẫu của profile MSE.
+5. **Độ lệch riêng ảnh chưa được xác lập**: b̂² có CI chứa 0 ở cả 12 cấu hình; giá trị điểm chỉ giải thích được độ dốc RMS khoảng −0,44…−0,50,
+   trong khi quan sát −0,27…−0,39 ở nhóm này. Không có bằng chứng — và không tuyên bố — lỗi cài đặt hay lỗi số học.
+6. Theo Mệnh đề 7.1, completeness chỉ đo **nhiễu cầu phương**; mọi điều trên không nói gì về $V_1$, $J$ hay chất lượng sampler.
 
 ## 2. Cái gì được đo
 
@@ -74,11 +78,55 @@ Bảng §2d của `pathfam-final-audit` lặp lại mô phỏng này với SD $\
 
 ## 6. Có thể viết gì trong paper
 
-Được: "Cầu phương `rand` không chệch (sai số completeness có dấu có CI chứa 0 ở mọi K) và MSE giảm theo K; luật $K^{-1/2}$ của sai số tuyệt
-đối là tiệm cận và ở K ≤ 32 độ dốc quan sát [giá trị, CI] lệch $-\tfrac12$ theo hướng phù hợp với [M1/M2/M3 theo §2c]." Không được: "lỗi cài
-đặt", "lỗi số học" (khi chưa có kiểm tra trực tiếp), hay dùng completeness để kết luận về $J$ hoặc sampler.
+> *The `rand` quadrature is unbiased: the signed completeness error has a 95 % CI containing 0 for all 12 configurations at K = 32 (55/60
+> configuration–K cells overall). The absolute error decreases with K (2.4–4.2× from K = 2 to 32, relative error 6–11 % at K = 32), but the fitted
+> slope of mean |error| over K = 2–32 ranges from −0.29 to −0.52, flatter than the asymptotic −½ for most N = 32 configurations. An exact
+> decomposition into an RMS part and a distribution-shape part (Prop. 7.3) shows that finite-K heavy tails explain the deviation for some
+> configurations, while for others it lies in the RMS profile; per-image offsets are not distinguishable from zero. We therefore treat the
+> K^{−1/2} law for absolute error as asymptotic and do not interpret the deviation as an implementation error. Completeness measures quadrature
+> noise only and carries no information about path-sampling variance or J (Prop. 7.1).*
 
-## 7. Kiểm tra bổ sung có thể làm sau (không làm trong vòng này)
+Không được: "lỗi cài đặt", "lỗi số học", "độ lệch riêng ảnh gây ra …" (chưa xác lập), hay dùng completeness để kết luận về $J$/sampler.
 
-Tính lại $\Delta F$ và vài đường ở float64 trên CPU cho một số ảnh (tách M2 do số học); lưu sai số từng đường (cho $G_1$ trực tiếp); mở rộng dải K.
-Mọi kiểm tra như vậy là hậu kiểm, không đổi endpoint.
+## 7. Kiểm tra bổ sung (tuỳ chọn, CPU, trên `signdiag2.csv` có sẵn)
+
+- **§2e (đã cài, chưa chạy):** $\overline{\hat m_{ic}\hat m_{ic'}}$ ($c\ne c'$) ước lượng **không chệch** $\mathbb E[b_{ic}b_{ic'}]$ mà không cần trừ phương sai,
+  vì nhiễu của hai cấu hình độc lập. Mạnh hơn b̂² nhiều (dùng 12 cấu hình trên cùng 128 ảnh). Dương rõ ⇒ độ lệch theo ảnh chung cho mọi họ
+  (nguồn khả dĩ: phép tính ΔF / số học đầu mút — vẫn cần kiểm tra trực tiếp); ≈ 0 ⇒ không có độ lệch chung, độ phẳng do lấy mẫu / đuôi nặng.
+  Chạy: `bash scripts/run.sh pathfam-final-audit`. Không đổi kết luận nào ở §6 nếu ≈ 0; nếu dương rõ, thêm một câu mô tả, vẫn không gọi là lỗi.
+- Sau này (không làm trong vòng này): tính lại ΔF và vài đường ở float64 trên CPU; lưu sai số từng đường để có $G_1$ trực tiếp; mở rộng dải K.
+
+## 8. Kết quả chi tiết trên dữ liệu thật (§2b–2d)
+
+G tham chiếu "chuẩn + không đồng nhất" $=0{,}798\,e^{-s^2/2}$ với $s$ = SD log σ_i (G gộp qua ảnh thấp hơn 0,798 ngay cả khi sai số chuẩn; mức này
+không đổi theo K nên không ảnh hưởng độ dốc). RMS dự báo = độ dốc của $\tfrac12\log(\hat b^2+2\hat\sigma^2/K)$ từ giá trị điểm.
+
+| cấu hình | độ dốc TB\|err\| [CI] | = RMS [CI] | + log G [CI] | G₂ / tham chiếu | b̂²/MSE₃₂ | RMS dự báo từ b̂² | nhóm |
+|---|---|---|---|---|---|---|---|
+| cmix α0,3 | −0,305 [−0,396; −0,216] | −0,292 [−0,409; −0,175] | −0,013 | 0,72 / 0,72 | 0,23 | −0,46 | A |
+| cmix α1 | −0,327 [−0,428; −0,227] | −0,328 [−0,453; −0,206] | 0,001 | 0,68 / 0,69 | 0,30 | −0,44 | A |
+| ln α1 | −0,360 [−0,456; −0,265] | −0,393 [−0,490; −0,274] | 0,033 | 0,65 / 0,67 | 0,04 | −0,49 | A |
+| spi α0,3 | −0,291 [−0,388; −0,193] | −0,266 [−0,385; −0,144] | −0,026 | 0,71 / 0,70 | 0,27 | −0,45 | A |
+| spi α0,1 N64 | −0,519 [−0,638; −0,379] | −0,667 [−0,838; −0,423] | 0,148 [0,019; 0,255] | 0,38 / 0,66 | 0,17 | −0,47 | B |
+| spi α10 N64 | −0,487 [−0,596; −0,373] | −0,650 [−0,778; −0,408] | 0,162 [0,016; 0,220] | 0,49 / 0,73 | < 0 | −0,50 | B |
+| ln α4 | −0,412 [−0,532; −0,285] | −0,506 [−0,660; −0,296] | 0,094 [−0,015; 0,154] | 0,53 / 0,71 | 0,15 | −0,47 | B (sát) |
+| spi α4 | −0,348 [−0,444; −0,248] | −0,475 [−0,607; −0,275] | 0,126 [−0,001; 0,193] | 0,51 / 0,69 | 0,23 | −0,46 | B (sát) |
+| ln α0,3 | −0,331 [−0,452; −0,207] | −0,423 [−0,612; −0,158] | 0,092 [−0,072; 0,181] | 0,50 / 0,66 | 0,04 | −0,49 | C |
+| spi α1 (incumbent) | −0,334 [−0,451; −0,210] | −0,388 [−0,543; −0,202] | 0,054 [−0,036; 0,120] | 0,57 / 0,66 | < 0 | −0,50 | C |
+| cmix α4 | −0,375 [−0,476; −0,274] | −0,395 [−0,535; −0,241] | 0,020 | 0,66 / 0,71 | 0,19 | −0,47 | C |
+| smooth δ1 | −0,424 [−0,504; −0,343] | −0,445 [−0,538; −0,350] | 0,021 | 0,69 / 0,64 | ≈ 0 | −0,50 | C |
+
+**Nhóm A — độ lệch ở mức RMS, hình dạng gần chuẩn** (CI độ dốc RMS loại −½; log G ≈ 0; G₂ = 97–102 % tham chiếu). Theo M7.2, trong kỳ vọng chỉ
+độ lệch riêng ảnh làm phẳng RMS; nhưng b̂² điểm chỉ dự báo −0,44…−0,49 (cận trên CI của b̂² cho phép tới khoảng −0,3, nên không loại được).
+Phần còn lại phù hợp với biến thiên lấy mẫu của profile MSE: MSE ở K = 2 dựa trên **một** cặp mỗi ảnh, gộp qua 128 ảnh có thang khác nhau.
+**Nhóm B — hình dạng ở K hữu hạn** (log G > 0, G₂ = 57–75 % tham chiếu): đuôi nặng ở K nhỏ làm phẳng TB|·| (M7.3). Với hai cấu hình N = 64, độ dốc
+RMS ước lượng lại dốc hơn −½ (CI vẫn chứa −½; không thể dốc hơn trong kỳ vọng theo M7.2 ⇒ lấy mẫu), hai độ lệch triệt tiêu ⇒ TB|·| ≈ −½.
+**Nhóm C — không phân biệt được**: các CI chứa cả giá trị null của RMS lẫn log G.
+
+**So với mô phỏng §2d** (cùng thiết kế, s = 0,54): sai số chuẩn không lệch cho TB|·| −0,504 (SD 0,040), RMS −0,506 (SD 0,052). Các độ dốc N = 32
+quan sát cách đó 2–5 SD — **không** phù hợp với "chuẩn, không lệch". Mô hình "đoạn trội" cho TB|·| −0,322 (SD 0,070), RMS −0,475 (SD 0,119); chuẩn có
+SD(b_i)/σ_i = 0,2 cho −0,425: các độ dốc quan sát nằm trong ±2 SD của hai mô hình này. Lưu ý: 12 cấu hình dùng **chung 128 ảnh** nên không phải 12 lần
+lặp độc lập — vài ảnh có sai số lớn có thể làm phẳng đồng thời nhiều cấu hình. Không suy luận gì về khác biệt giữa họ hay giữa N từ bảng này
+(N = 64 trùng với α khác; mô tả).
+
+Phân loại nhóm là mô tả, không hiệu chỉnh đa kiểm định, đặt theo quy tắc §5 trước khi xem số liệu.

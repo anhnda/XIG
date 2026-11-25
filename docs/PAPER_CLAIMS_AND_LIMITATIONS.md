@@ -60,16 +60,30 @@ và DP; khác biệt chỉ có thể đến từ bậc ≥ 5 (đuôi) và phươ
 
 ## 3. Chẩn đoán hậu kiểm [HẬU KIỂM]
 
-**D1 — thang đo và hướng.** Theo M6.5, $L(a)=(r-\cos)^2+(1-\cos^2)$ với $r=\|Pa\|/\|\delta\|$; bản đồ 0 có $L=1$ và mọi phần $L>1$ là lệch thang
-đo. Trong BUDGET G3, $\bar J$ ở mức 10–20 (≫ 1), nên phần lớn J thô là lệch thang đo của tổng theo ô, không phải lệch hướng. Hệ quả:
-- **J thô phụ thuộc cả thang đo lẫn alignment**; một cải thiện J có thể đến từ chuẩn nhỏ hơn của $P\bar A_K$ (gồm phần phương sai, vì
-  $\mathbb E\|P\bar A_K\|^2=\|P\mu\|^2+\operatorname{tr}P\operatorname{Cov}P^\top$). C1/C2 vẫn đúng như phát biểu về objective đã khoá; không được diễn giải là
-  "hướng attribution trung thực hơn".
-- **β riêng từng ảnh** ($\beta_i=\cos_i/r_i$, dùng $\Delta F_S$ của chính ảnh, kể cả bản cross-fit theo ô) là đại lượng chẩn đoán đo phần lệch hướng
-  $1-\cos^2$; **không phải estimator triển khai độc lập** vì cần đúng các phép xoá dùng để đánh giá.
-- **β chung ngoài mẫu** (bỏ-một-ảnh) là hiệu chỉnh triển khai được duy nhất; nó chỉ **cải thiện nhẹ so với bản đồ 0** ⇒ sau phép đổi thang đo
-  tốt nhất có thể triển khai, mô hình cộng tính theo ô giải thích được rất ít hiệu ứng xoá trên `del_sq`. Đây là giới hạn của objective/D,
-  không phải của riêng họ đường nào.
+**D1 — thang đo và hướng** (`PATHFAM_FINAL_AUDIT.md` §1; 12 cấu hình × 128 ảnh test PATHFAM đã khoá, bản đồ dựng lại bằng luồng `pfsd2`,
+bộ ô đánh giá, `del_sq`). Theo M6.5, $L(a)=(r-\cos)^2+(1-\cos^2)$ với $r=\|Pa\|/\|\delta\|$; bản đồ 0 có $L=1$, mọi phần $L>1$ là lệch thang đo.
+
+| đại lượng | bản đồ B = 1024 (K = 32; N = 64: K = 16) | bản đồ B = 256 (K = 8; N = 64: K = 4) |
+|---|---|---|
+| L ở β = 1 (đã khoá) | 11,7–18,6; smooth 37,7 | 15,9–25,1; spi α0,1 N64 31,2; smooth 46,9 |
+| trung vị ‖Pa‖/‖δ‖ | 2,5–3,2×; smooth 3,9× | 2,8–3,5×; smooth 4,3× |
+| trung vị cos(Pa, δ); tỷ lệ ảnh cos ≤ 0 | 0,23–0,37; 19–23 % | 0,20–0,32; 19–23 % |
+| L ở β riêng từng ảnh = TB(1 − cos²) (chẩn đoán) | 0,808–0,874 | 0,843–0,894 |
+| β chung (trong mẫu) | 0,021–0,056 | 0,016–0,039 |
+| **L ở β chung ngoài mẫu theo ảnh (triển khai được)** | **0,965–0,985** | **0,975–0,994** (4/12 CI chứa 1) |
+
+Hệ quả:
+- **J thô phụ thuộc cả thang đo lẫn alignment, và bị thang đo chi phối**: ≥ 91 % (đến 98 %) của L ở β = 1 là số hạng $(r-\cos)^2$. Tổng theo ô của bản đồ
+  chiếu lớn hơn hiệu ứng xoá 2,5–4,3 lần về chuẩn; phương sai ở K nhỏ làm chuẩn này lớn thêm (L ở B = 256 > B = 1024 cho mọi cấu hình,
+  đúng như $\mathbb E\|P\bar A_K\|^2=\|P\mu\|^2+\operatorname{tr}P\operatorname{Cov}P^\top$).
+- **β riêng từng ảnh** dùng $\Delta F_S$ của chính ảnh (kể cả bản cross-fit theo ô: 0,815–0,904) ⇒ là đại lượng chẩn đoán đo $1-\cos^2$; **không phải
+  estimator triển khai độc lập**. Ngay cả với thang đo "oracle" này, bản đồ chỉ giải thích 11–19 % $\|\delta\|^2$.
+- **β chung ngoài mẫu** (bỏ-một-ảnh) là hiệu chỉnh triển khai được duy nhất và **chỉ cải thiện nhẹ so với bản đồ 0** (0,6–3,5 %; ở B = 256 có 4/12
+  cấu hình CI chạm 1). Sau phép đổi thang đo tốt nhất có thể triển khai, mô hình cộng tính theo ô gần như không dự đoán được hiệu ứng xoá trên `del_sq`.
+  Đây là giới hạn của objective/D, không riêng họ đường nào.
+- Ví dụ minh hoạ (cùng B = 1024, mô tả): incumbent spi α1 N32 so với spi α10 N64 — L ở β = 1: 13,19 so với 18,61 (cách biệt 5,4, cỡ ΔJ xác nhận của
+  BUDGET); ở β riêng ảnh: 0,821 so với 0,858; ở β chung ngoài mẫu: 0,969 so với 0,976. **Phần lớn cách biệt J thô là thang đo.** C1/C2 vẫn đúng như
+  phát biểu về objective đã khoá; không được diễn giải là "hướng attribution trung thực hơn".
 
 **D2 — metric có dấu / không dấu.** Infidelity dùng tổng **có dấu** theo kênh trong ô; metric ngoài đã khoá xếp hạng theo $\sum_c|A_c|$ (không dấu).
 Mâu thuẫn J ↔ metric ngoài không phải mâu thuẫn logic (đo hai tính chất khác nhau của cùng bản đồ). InsDel nền blur lệch nền với attribution nền
@@ -78,18 +92,23 @@ Mâu thuẫn J ↔ metric ngoài không phải mâu thuẫn logic (đo hai tính
 
 **D3 — so sánh cùng exploration** (spi / ln / cmix cùng h, N = 32, cùng K): mô tả; khớp h không phải khớp J.
 
-**D4 — completeness.** Sai số có dấu có CI chứa 0 (cầu phương không chệch, như M7.1–7.2 dự đoán). Độ dốc TB|err| theo $\log K$ trên CNN có
-thể khác $-\tfrac12$; giải thích bằng hình dạng phân phối ở K hữu hạn, độ lệch riêng ảnh chưa xác định nguồn, và nhiễu lấy mẫu
-(`COMPLETENESS_SLOPE.md`, `pathfam-final-audit` §2c–2d). **Không gọi là lỗi cài đặt.** Completeness không nói gì về $V_1$ hay J (M7.1).
+**D4 — completeness** (`PATHFAM_FINAL_AUDIT.md` §2b–2d; chi tiết `COMPLETENESS_SLOPE.md`). Sai số có dấu có CI chứa 0 ở cả 12 cấu hình tại K = 32
+(55/60 ô cấu hình × K; 5 ngoại lệ ở K ≤ 16, 4 âm 1 dương, mỗi ngoại lệ ở một cấu hình khác nhau, P(≥ 5 | ngẫu nhiên) = 0,18) — cầu phương không chệch như M7.1–7.2. TB|err| giảm 2,4–4,2× từ
+K = 2 đến 32 (lý thuyết 4×); sai số tương đối ở K = 32 là 6–11 %. Độ dốc TB|err| theo log K: −0,29 đến −0,52 (N = 64: chứa −½; 7/10 cấu hình N = 32:
+phẳng hơn, CI loại −½). Phân rã chính xác RMS + log G: một phần do đuôi nặng ở K hữu hạn (N = 64, ln α4, spi α4), một phần ở profile RMS với hình
+dạng gần chuẩn (cmix α0,3, cmix α1, ln α1, spi α0,3); độ lệch riêng ảnh b̂² có CI chứa 0 ở cả 12 cấu hình và giá trị điểm chỉ giải thích một phần nhỏ.
+**Không gọi là lỗi cài đặt.** Luật $K^{-1/2}$ của sai số tuyệt đối được trình bày là tiệm cận. Completeness không nói gì về $V_1$ hay J (M7.1).
 
 **D5 — đối chiếu với dự báo lý thuyết** ($\rho=2V_e/V_1$ so với H6.3; smooth so với DP cùng D theo H4.2; ln/cmix so với spi cùng h theo H3.2,
-H4.1): báo như mô tả, dù khớp hay không khớp; khớp ≠ kiểm định (mạng thật không thoả (Poly$_p$)).
+H4.1): báo như mô tả, dù khớp hay không khớp; khớp ≠ kiểm định (mạng thật không thoả (Poly$_p$)). Một quan sát mô tả từ D1: ở B = 1024, $1-\cos^2$ (β riêng ảnh) tăng đơn điệu theo α trong cả ba họ N = 32 — α = 0,3: 0,808–0,815; α = 1: 0,821–0,826;
+α = 4: 0,832–0,838 — và cao hơn ở spi α = 10 N64 (0,858), smooth (0,874). Cùng chiều với M3.4 (h lớn → gần Shapley theo khối, phù hợp với trò chơi
+xoá tập). Khác biệt nhỏ, CI chồng lấn, không có phép so cặp, trên ảnh test đã dùng: chỉ là giả thuyết cho nghiên cứu sau.
 
 ## 4. Giới hạn
 
 | # | Giới hạn | Ảnh hưởng tới |
 |---|---|---|
-| L1 | J thô trộn thang đo và hướng (M6.5); β triển khai được chỉ hơi tốt hơn bản đồ 0 | diễn giải C1, C2 |
+| L1 | J thô bị thang đo chi phối (≥ 91 % của L ở β = 1 là lệch thang đo, M6.5); β chung ngoài mẫu chỉ cho L = 0,965–0,994 (bản đồ 0: 1) | diễn giải C1, C2 |
 | L2 | Một mô hình (ResNet-50, IMAGENET1K_V2), một tập ảnh (ImageNet-Segmentation, `gtsegs_ijcv`), một nền (đen) | khả năng suy rộng |
 | L3 | Một họ D chính (`del_sq`, 512 + 512 ô); 7 D khác chỉ mô tả | phụ thuộc định nghĩa infidelity |
 | L4 | M = 1 `rand`; N ∈ {32, 64}; K ≤ 32 (B ≤ 1024 cho kiểm định); 48 ảnh test (BUDGET), 48–128 theo lực (PATHFAM) | phạm vi ngân sách, độ chính xác |
@@ -97,7 +116,7 @@ H4.1): báo như mô tả, dù khớp hay không khớp; khớp ≠ kiểm đị
 | L6 | Các họ khớp theo D (một số); ln khớp D bằng hiệu chuẩn Monte Carlo (σ tất định, seed 10); smooth không đạt vùng α = 1 | so sánh họ |
 | L7 | Nhiều phân tích hậu kiểm trên cùng ảnh test (signdiag, signdiag2, final-audit) | mọi chẩn đoán chỉ mô tả |
 | L8 | Metric ngoài không bao giờ dùng để chọn; xếp hạng không dấu; InsDel nền blur lệch nền | không có tuyên bố về "chất lượng giải thích" nói chung |
-| L9 | Tính toán float32 trên GPU; nguồn độ lệch completeness riêng ảnh (nếu có) chưa xác định | D4 |
+| L9 | Độ dốc completeness tuyệt đối −0,29…−0,52 ở K ≤ 32; tính toán float32; độ lệch riêng ảnh chưa xác lập, nguồn (nếu có) chưa xác định | D4 |
 | L10 | Lịch sử E10 / COORD_MIX trước đây không tái lập được từ artifact | chỉ trích dẫn như bối cảnh |
 
 ## 5. Hướng dẫn câu chữ

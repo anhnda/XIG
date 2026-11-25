@@ -58,11 +58,13 @@ Nhãn: **[T]** định lý/mệnh đề (chứng minh ở phụ lục) · **[E-x
 - Thông điệp: các thống kê μ bậc thấp (bất biến khi đảo, D) được khớp ⇒ hiệu năng giữ được mà không cần Dirichlet. **[L]** L5, L6.
 
 ## 7. Diagnostics: what J does and does not measure **[E-hậu kiểm]**
-- 7.1 Thang đo và hướng: β riêng ảnh (chẩn đoán, không triển khai được), β chung trong mẫu, β chung ngoài mẫu (chỉ hơi tốt hơn bản đồ 0) ⇒
-  mô hình cộng tính theo ô giải thích ít hiệu ứng xoá. **[L]** L1.
+- 7.1 Thang đo và hướng: L ở β = 1 là 11,7–47, ≥ 91 % là lệch thang đo (tổng theo ô lớn gấp 2,5–4,3 lần hiệu ứng xoá); β riêng ảnh (chẩn đoán,
+  không triển khai được) cho 1 − cos² = 0,81–0,89; β chung ngoài mẫu (triển khai được) chỉ 0,965–0,994 so với 1 của bản đồ 0 ⇒ mô hình cộng tính
+  theo ô giải thích ít hiệu ứng xoá; cách biệt J thô giữa cấu hình phần lớn là thang đo. **[L]** L1.
 - 7.2 Có dấu vs không dấu: định nghĩa metric, lệch nền InsDel; chỉ đọc nền đen; J ↔ metric ngoài đo hai tính chất khác nhau. **[L]** L8.
 - 7.3 Completeness ở K hữu hạn: **[T]** M7.1–7.3 (chỉ nhiễu cầu phương; MSE chính xác; luật $K^{-1/2}$ tiệm cận, cận Wasserstein); dữ liệu: sai số có dấu
-  không chệch; độ dốc tuyệt đối và phân rã RMS + log G, $\overline{b^2}$, mô phỏng ở đúng thiết kế. Không tuyên bố lỗi cài đặt. **[L]** L9.
+  không chệch (CI chứa 0 ở mọi cấu hình tại K = 32); độ dốc tuyệt đối −0,29…−0,52 và phân rã RMS + log G (đuôi nặng ở một số cấu hình, profile RMS ở số khác),
+  $\overline{b^2}$ không phân biệt được với 0, mô phỏng ở đúng thiết kế. Không tuyên bố lỗi cài đặt. **[L]** L9.
 
 ## 8. Related work
 - Path attribution (IG và biến thể đường, Shapley theo đường/Aumann–Shapley), ước lượng Monte Carlo cho attribution, infidelity/sensitivity-n,

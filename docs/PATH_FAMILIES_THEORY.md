@@ -246,6 +246,7 @@ Hai tọa độ so sánh họ đường: $\big(L(\mu_Q),\,N\cdot V(Q)\big)$ — 
 $$L(\beta a)=\beta^2r^2-2\beta r\cos+1,\qquad L(a)=\underbrace{(r-\cos)^2}_{\text{lệch thang đo}}+\underbrace{1-\cos^2}_{\text{lệch hướng}},\qquad \min_\beta L=1-\cos^2\text{ tại }\beta^*=\cos/r.$$
 Bản đồ 0 có $L=1$; $L(a)<1\iff r<2\cos$. Vì $1-\cos^2\le1$, **$L(a)-1\le(r-\cos)^2$**: mọi phần của $L$ vượt quá 1 là lệch thang đo.
 *Chứng minh.* Khai triển $\|\beta y-d\|^2/\|d\|^2$. ∎ Áp dụng cho từng thực hiện $\bar A_K$ nên cũng cho $J$ (trung bình).
+Dữ liệu (hậu kiểm, `PAPER_CLAIMS_AND_LIMITATIONS.md` D1): $L$ ở $\beta=1$ là 11,7–47 nên $\ge91\%$ là số hạng thang đo; $1-\cos^2$ trung bình 0,81–0,89.
 Hệ quả: so sánh $J$ thô giữa hai cấu hình trộn lẫn khác biệt về chuẩn của $P\bar A_K$ (gồm cả phần do phương sai, vì $\mathbb E\|P\bar A_K\|^2=\|P\mu\|^2+\operatorname{tr}P\operatorname{Cov}P^\top$)
 và khác biệt về hướng.
 
@@ -289,7 +290,9 @@ phân phối nhọn/đuôi nặng (t$_3$: 0,64) và lớn hơn với phân phố
 **Kiểm số / mô phỏng** (`pathfam-final-audit` §2a, §2d; `tests/test_proof_signdiag.py`): mô hình trơn $d=16$, $N=32$: độ dốc $-0{,}496$ / $-0{,}492$
 (4000 lần lặp); MLP ReLU: độ nhọn sai số 3,14, độ dốc TB|·| $-0{,}497$, RMS $-0{,}500$. Ở đúng thiết kế dữ liệu thật (128 ảnh, 16 cặp lồng nhau,
 SD $\log\sigma_i=1$): sai số chuẩn $-0{,}498$ (SD 0,055); đều $-0{,}527$; t$_3$ $-0{,}443$; "đoạn trội" $-0{,}304$; chuẩn có $b_i$ với
-$\operatorname{SD}(b_i)/\sigma_i=0{,}2$: $-0{,}417$. Phân tích dữ liệu CNN: `docs/COMPLETENESS_SLOPE.md`.
+$\operatorname{SD}(b_i)/\sigma_i=0{,}2$: $-0{,}417$.
+**Dữ liệu CNN (hậu kiểm, 12 cấu hình × 128 ảnh):** sai số có dấu có CI chứa 0 ở mọi cấu hình tại $K=32$ (M7.1); độ dốc TB|err| $-0{,}29\ldots-0{,}52$;
+phân rã M7.3 tách được phần đuôi nặng (độ dốc $\log G>0$) ở một số cấu hình và phần ở profile RMS ở số khác — `docs/COMPLETENESS_SLOPE.md`.
 
 ---
 

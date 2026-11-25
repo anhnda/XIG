@@ -108,7 +108,7 @@ bash scripts/run.sh pathfam-proofcheck  # kiểm toán chứng minh (sympy + MC)
 bash scripts/run.sh pathfam-signdiag    # GPU, hậu kiểm có dấu / không dấu trên ảnh test đã khoá → pathfam/PATHFAM_SIGNED_UNSIGNED.md
 bash scripts/run.sh pathfam-freeze   # CHẠY CUỐI: sha256 mọi artifact + seed + σ → pathfam/FROZEN.json; chặn pathfam-dev / lock / test
 ```
-Kiểm thử: `pytest tests/` 93 passed (gồm kiểm tích hợp verify / diag / freeze / signdiag-report trên dữ liệu tổng hợp, kiểm số và kiểm
+Kiểm thử: `pytest tests/` 94 passed (gồm kiểm tích hợp verify / diag / freeze / signdiag-report trên dữ liệu tổng hợp, kiểm số và kiểm
 symbolic các định lý Phase 2).
 
 **pathfam-signdiag** (hậu kiểm, mô tả, không chọn lại): dựng lại bản đồ của các cấu hình test đã khoá trên chính các ảnh test đã khoá
@@ -131,5 +131,6 @@ chẩn đoán, KHÔNG triển khai được vì dùng ΔF_S của chính ảnh),
 triển khai được duy nhất); (2) luật completeness K^{−1/2}: mô phỏng CPU với cầu phương `rand` M = 1, cặp `rev` độc lập, thiết kế lồng nhau và
 độc lập — độ dốc −0,496 [−0,508; −0,483] và −0,492 [−0,503; −0,481], sai số có dấu có CI chứa 0 ở mọi K (4000 lần lặp); cùng phân tích
 trên dữ liệu thật với CI theo ảnh; §2c tách độ dốc TB|err| = độ dốc RMS + độ dốc log G (hình dạng ở K hữu hạn), ước lượng không chệch độ lệch
-riêng ảnh b̂² từ các khối cặp rời nhau khôi phục từ bản đồ lồng nhau; §2d mô phỏng phân phối lấy mẫu của độ dốc ở đúng thiết kế (`docs/COMPLETENESS_SLOPE.md`);
+riêng ảnh b̂² từ các khối cặp rời nhau khôi phục từ bản đồ lồng nhau; §2d mô phỏng phân phối lấy mẫu của độ dốc ở đúng thiết kế; §2e hiệp phương sai chéo cấu hình của sai số K = 32 (ước lượng không chệch độ lệch
+riêng ảnh chung mọi họ) (`docs/COMPLETENESS_SLOPE.md`);
 (3) khoá chẩn đoán (`DIAG_LOCK.json`). Thứ tự đóng: `pathfam-final-audit` → `pathfam-freeze`.
